@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Az-MDT</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div id="mdt-wrapper" class="mdt-root hidden">
+        <div class="mdt-window">
+            <!-- HEADER -->
+            <header class="mdt-header">
+                <div class="mdt-user">
+                    <div class="mdt-user-avatar">
+                        <div class="mdt-user-initials">AZ</div>
+                    </div>
+                    <div class="mdt-user-info">
+                        <div id="mdt-user-name" class="mdt-user-name">Unknown</div>
+                        <div id="mdt-user-meta" class="mdt-user-meta">police · 0 · AVAILABLE</div>
+                    </div>
+                </div>
+                <div class="mdt-header-status">
+                    <span id="mdt-my-status" class="mdt-status-pill">10-8 AVAILABLE</span>
+                    <button id="mdt-status-btn" class="btn btn-sm btn-secondary">Status: 10-8 AVAILABLE</button>
+                    <button id="mdt-panic-btn" class="btn btn-sm btn-danger">PANIC</button>
+                    <button id="mdt-close-btn" class="btn btn-sm btn-ghost">Close</button>
+                </div>
+            </header>
+
+            <div class="mdt-body">
+                <!-- SIDEBAR NAV -->
+                <aside class="mdt-sidebar">
+                    <button class="mdt-nav-btn active" data-page="dashboard">Dashboard</button>
+                    <button class="mdt-nav-btn" data-page="nameSearch">Name Search</button>
+                    <button class="mdt-nav-btn" data-page="plateSearch">Vehicle Search</button>
+                    <button class="mdt-nav-btn" data-page="weaponSearch">Weapon Search</button>
+                    <button class="mdt-nav-btn" data-page="bolos">BOLOs</button>
+                    <button class="mdt-nav-btn" data-page="reports">Reports</button>
+                    <button class="mdt-nav-btn" data-page="warrants">Warrants</button>
+                    <button class="mdt-nav-btn" data-page="employees">Employees</button>
+                    <button class="mdt-nav-btn" data-page="livechat">Live Chat</button>
+                    <button class="mdt-nav-btn" data-page="iaLogs">IA Logs</button>
+                </aside>
+
+                <!-- MAIN CONTENT -->
+                <main class="mdt-main">
+                    <!-- DASHBOARD -->
+                    <section id="page-dashboard" class="mdt-page active" data-mdt-page="dashboard">
+                        <div class="mdt-grid">
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Active Units</div>
+                                <div class="mdt-card-body" id="mdt-units-list">
+                                    <div class="mdt-empty">No active units.</div>
+                                </div>
+                            </div>
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">911 Calls</div>
+                                <div class="mdt-card-body" id="mdt-calls-list">
+                                    <div class="mdt-empty">No active 911 calls.</div>
+                                </div>
+                            </div>
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Active BOLOs</div>
+                                <div class="mdt-card-body" id="mdt-dashboard-bolos">
+                                    <div class="mdt-empty">No active BOLOs.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- NAME SEARCH -->
+                    <section id="page-nameSearch" class="mdt-page" data-mdt-page="nameSearch">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Name Search</div>
+                            <div class="mdt-card-body">
+                                <form id="name-search-form" class="mdt-form-inline">
+                                    <input id="first-name-input" type="text" placeholder="First name" />
+                                    <input id="last-name-input" type="text" placeholder="Last name" />
+                                    <button type="submit" class="btn btn-primary">Search</button>
+                                </form>
+                                <div id="name-search-results" class="mdt-list"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- PLATE / VEHICLE SEARCH -->
+                    <section id="page-plateSearch" class="mdt-page" data-mdt-page="plateSearch">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Vehicle / Plate Search</div>
+                            <div class="mdt-card-body">
+                                <form id="plate-search-form" class="mdt-form-inline">
+                                    <input id="plate-input" type="text" placeholder="Plate (full or partial)" />
+                                    <button type="submit" class="btn btn-primary">Search</button>
+                                </form>
+                                <div id="plate-search-results" class="mdt-list"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- WEAPON SEARCH -->
+                    <section id="page-weaponSearch" class="mdt-page" data-mdt-page="weaponSearch">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Weapon Search</div>
+                            <div class="mdt-card-body">
+                                <form id="weapon-search-form" class="mdt-form-inline">
+                                    <input id="weapon-serial-input" type="text" placeholder="Weapon serial" />
+                                    <button type="submit" class="btn btn-primary">Search</button>
+                                </form>
+                                <div id="weapon-search-results" class="mdt-list">
+                                    <div class="mdt-empty">No results.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- BOLOS -->
+                    <section id="page-bolos" class="mdt-page" data-mdt-page="bolos">
+                        <div class="mdt-grid">
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Create BOLO</div>
+                                <div class="mdt-card-body">
+                                    <form id="bolo-form" class="mdt-form-vertical">
+                                        <input id="bolo-title" type="text" placeholder="Title" />
+                                        <select id="bolo-type">
+                                            <option value="vehicle">Vehicle</option>
+                                            <option value="person">Person</option>
+                                            <option value="other">Other</option>
+                                        </select>
+                                        <textarea id="bolo-details" rows="4" placeholder="Details"></textarea>
+                                        <button type="submit" class="btn btn-primary">Create BOLO</button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Active BOLOs</div>
+                                <div class="mdt-card-body" id="bolo-list">
+                                    <div class="mdt-empty">No active BOLOs.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- REPORTS -->
+                    <section id="page-reports" class="mdt-page" data-mdt-page="reports">
+                        <div class="mdt-grid">
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Create Report / Citation / Arrest</div>
+                                <div class="mdt-card-body">
+                                    <form id="report-form" class="mdt-form-vertical">
+                                        <input id="report-title" type="text" placeholder="Title" />
+                                        <select id="report-type">
+                                            <option value="incident">Incident Report</option>
+                                            <option value="citation">Citation / Ticket</option>
+                                            <option value="arrest">Arrest Report</option>
+                                        </select>
+                                        <textarea id="report-body" rows="6" placeholder="Details, notes, charges, etc."></textarea>
+                                        <button type="submit" class="btn btn-primary">Save Report</button>
+                                    </form>
+                                </div>
+                            </div>
+                            <div class="mdt-card">
+                                <div class="mdt-card-header">Recent Reports</div>
+                                <div class="mdt-card-body" id="report-list">
+                                    <div class="mdt-empty">No reports.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- WARRANTS -->
+                    <section id="page-warrants" class="mdt-page" data-mdt-page="warrants">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Warrants</div>
+                            <div class="mdt-card-body" id="warrants-list">
+                                <div class="mdt-empty">No warrants.</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- EMPLOYEES (ADMIN LOGIN HERE) -->
+                    <section id="page-employees" class="mdt-page" data-mdt-page="employees">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">
+                                <span>Employees</span>
+                                <span id="admin-mode-indicator" class="mdt-row-tag" style="display:none;">ADMIN MODE</span>
+                            </div>
+                            <div class="mdt-card-body">
+                                <!-- Admin login row -->
+                                <div id="admin-login-row" class="mdt-form-vertical" style="margin-bottom:10px;">
+                                    <div class="mdt-row-meta" style="font-size:11px;">
+                                        Enter the admin password (set in <strong>config.js</strong>) to enable MDT admin tools.
+                                    </div>
+                                        <form id="admin-login-form" class="mdt-form-inline">
+                                            <div class="mdt-input-with-icon">
+                                                <span class="mdt-input-icon">🔒</span>
+                                                <input id="admin-password-input" type="password" placeholder="Admin password" />
+                                            </div>
+                                            <button type="submit" class="btn btn-primary">Enter Admin Mode</button>
+                                        </form>
+                                    <div id="admin-login-error" class="mdt-row-meta" style="font-size:11px;color:#fca5a5;"></div>
+                                </div>
+
+                                <!-- Admin actions row -->
+                                <div id="admin-actions-row" class="mdt-form-row hidden" style="margin-bottom:10px;align-items:center;justify-content:space-between;">
+                                    <div class="mdt-row-meta" style="font-size:11px;">
+                                        Admin mode is active. Delete buttons will appear on BOLOs, Reports, Calls and Employees.
+                                    </div>
+                                    <button id="admin-exit-admin" class="btn btn-secondary btn-xs">Exit Admin Mode</button>
+                                </div>
+
+                                <!-- Employee list -->
+                                <div id="employee-list" class="mdt-list">
+                                    <div class="mdt-empty">No employees found.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- LIVE CHAT -->
+                    <section id="page-livechat" class="mdt-page" data-mdt-page="livechat">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Dispatch / MDT Chat</div>
+                            <div class="mdt-card-body mdt-chat-body">
+                                <div id="livechat-messages" class="mdt-chat-messages"></div>
+                            </div>
+                            <div class="mdt-card-footer">
+                                <form id="livechat-form" class="mdt-form-inline">
+                                    <input id="livechat-input" type="text" placeholder="Type message..." />
+                                    <button type="submit" class="btn btn-primary">Send</button>
+                                </form>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- INTERNAL AFFAIRS / ACTION LOG -->
+                    <section id="page-iaLogs" class="mdt-page" data-mdt-page="iaLogs">
+                        <div class="mdt-card">
+                            <div class="mdt-card-header">Internal Affairs Log</div>
+                            <div class="mdt-card-body" id="ia-log-list">
+                                <div class="mdt-empty">Enter admin mode to view Internal Affairs logs.</div>
+                            </div>
+                        </div>
+                    </section>
+                </main>
+            </div>
+
+            <div class="mdt-resize-handle"></div>
+
+            <!-- MODALS (Notes / Flags / Warrants) -->
+            <div id="mdt-modal-backdrop" class="mdt-modal-backdrop hidden"
+                 style="position:fixed;inset:0;background:rgba(15,23,42,0.8);display:flex;align-items:center;justify-content:center;z-index:999;">
+                <!-- Quick Note Modal -->
+                <div id="mdt-modal-note" class="mdt-modal hidden"
+                     style="background:var(--bg-card,#020617);border-radius:12px;padding:16px;width:420px;max-width:95%;box-shadow:0 20px 40px rgba(0,0,0,0.6);">
+                    <div class="mdt-card-header">Add Quick Note</div>
+                    <div class="mdt-card-body">
+                        <div class="mdt-row-meta" style="font-size:12px;margin-bottom:6px;">
+                            Target: <span id="mdt-note-target"></span>
+                        </div>
+                        <form id="mdt-note-form" class="mdt-form-vertical">
+                            <textarea id="mdt-note-text" rows="4" placeholder="Enter note details..."></textarea>
+                            <div class="mdt-form-row" style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">
+                                <button type="button" class="btn btn-secondary" id="mdt-note-cancel">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Save Note</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Flags Modal -->
+                <div id="mdt-modal-flags" class="mdt-modal hidden"
+                     style="background:var(--bg-card,#020617);border-radius:12px;padding:16px;width:430px;max-width:95%;box-shadow:0 20px 40px rgba(0,0,0,0.6);">
+                    <div class="mdt-card-header">Update Identity Flags</div>
+                    <div class="mdt-card-body">
+                        <div class="mdt-row-meta" style="font-size:12px;margin-bottom:6px;">
+                            Target: <span id="mdt-flags-target"></span>
+                        </div>
+                        <form id="mdt-flags-form" class="mdt-form-vertical">
+                            <div class="mdt-form-row mdt-flags-checklist">
+                                <label class="mdt-checkbox">
+                                    <input type="checkbox" id="mdt-flag-officer-safety" />
+                                    <span class="mdt-checkbox-box"></span>
+                                    <span class="mdt-checkbox-label">Officer Safety</span>
+                                </label>
+
+                                <label class="mdt-checkbox">
+                                    <input type="checkbox" id="mdt-flag-armed" />
+                                    <span class="mdt-checkbox-box"></span>
+                                    <span class="mdt-checkbox-label">Armed &amp; Dangerous</span>
+                                </label>
+
+                                <label class="mdt-checkbox">
+                                    <input type="checkbox" id="mdt-flag-gang" />
+                                    <span class="mdt-checkbox-box"></span>
+                                    <span class="mdt-checkbox-label">Gang Affiliation</span>
+                                </label>
+
+                                <label class="mdt-checkbox">
+                                    <input type="checkbox" id="mdt-flag-mental" />
+                                    <span class="mdt-checkbox-box"></span>
+                                    <span class="mdt-checkbox-label">Mental Health</span>
+                                </label>
+                            </div>
+
+                            <textarea id="mdt-flags-notes" rows="3" placeholder="Optional notes about these flags..."></textarea>
+                            <div class="mdt-form-row" style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">
+                                <button type="button" class="btn btn-secondary" id="mdt-flags-cancel">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Save Flags</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Warrant Modal -->
+                <div id="mdt-modal-warrant" class="mdt-modal hidden"
+                     style="background:var(--bg-card,#020617);border-radius:12px;padding:16px;width:460px;max-width:95%;box-shadow:0 20px 40px rgba(0,0,0,0.6);">
+                    <div class="mdt-card-header">Create Warrant</div>
+                    <div class="mdt-card-body">
+                        <form id="mdt-warrant-form" class="mdt-form-vertical">
+                            <div class="mdt-form-row">
+                                <label style="font-size:12px;">Name</label>
+                                <input id="mdt-warrant-name" type="text" readonly />
+                            </div>
+                            <div class="mdt-form-row">
+                                <label style="font-size:12px;">Char ID (optional)</label>
+                                <input id="mdt-warrant-charid" type="text" readonly />
+                            </div>
+                            <textarea id="mdt-warrant-reason" rows="5" placeholder="Reason, charges, and any important notes..."></textarea>
+                            <div class="mdt-form-row" style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;">
+                                <button type="button" class="btn btn-secondary" id="mdt-warrant-cancel">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Create Warrant</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <!-- END MODALS -->
+        </div>
+    </div>
+
+    <!-- Config with admin password -->
+    <script src="config/config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

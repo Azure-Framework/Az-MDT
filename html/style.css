@@ -1,0 +1,667 @@
+/* ---------- RESET ---------- */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #f9fbff;
+    overflow: hidden;
+}
+
+/* ---------- THEME ---------- */
+:root {
+    --bg-overlay: rgba(3, 8, 23, 0);        /* transparent overlay */
+    --bg-main: #020617;
+    --bg-card: rgba(15, 23, 42, 0.96);
+    --bg-card-soft: rgba(15, 23, 42, 0.95);
+    --bg-input: rgba(15, 23, 42, 0.9);
+    --bg-input-soft: rgba(15, 23, 42, 0.8);
+
+    --accent: #22c3ff;
+    --accent-soft: rgba(34, 195, 255, 0.16);
+    --accent-strong: #38bdf8;
+
+    --border-subtle: rgba(148, 163, 184, 0.15);
+    --border-strong: rgba(148, 163, 184, 0.28);
+
+    --text-main: #e5f2ff;
+    --text-sub: #94a3b8;
+    --text-muted: #64748b;
+
+    --danger: #ef4444;
+    --danger-soft: rgba(239, 68, 68, 0.15);
+
+    --radius-lg: 18px;
+    --radius-md: 10px;
+
+    --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.85);
+}
+
+/* ---------- WRAPPER ---------- */
+.hidden {
+    display: none !important;
+}
+
+#mdt-wrapper {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+/* ---------- WINDOW ---------- */
+.mdt-window {
+    width: 90vw;
+    height: 80vh;
+    max-width: 1500px;
+    max-height: 900px;
+    border-radius: 24px;
+
+    background:
+        radial-gradient(circle at top right, rgba(56, 189, 248, 0.18) 0%, transparent 55%),
+        radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.18) 0%, transparent 55%),
+        rgba(2, 6, 23, 0.96);
+
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-soft);
+
+    display: flex;
+    flex-direction: column;          /* 👈 header on top, body below */
+    overflow: hidden;
+    position: relative;
+}
+
+/* ---------- HEADER ---------- */
+.mdt-header {
+    height: 78px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.92));
+}
+
+/* user pill (already mostly styled) */
+.mdt-user {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 10px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.9));
+    border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.mdt-user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 20% 0%, #38bdf8 0%, #0ea5e9 35%, #0f172a 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.95);
+}
+
+.mdt-user-initials {
+    color: #e0f2fe;
+}
+
+.mdt-user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.mdt-user-name {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mdt-user-meta {
+    font-size: 11px;
+    color: var(--text-sub);
+}
+
+.mdt-header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ---------- BODY LAYOUT ---------- */
+.mdt-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+/* ---------- SIDEBAR ---------- */
+.mdt-sidebar {
+    width: 230px;
+    background: radial-gradient(circle at top left, #0f172a 0%, #020617 55%, #020617 100%);
+    border-right: 1px solid var(--border-subtle);
+    padding: 18px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* nav buttons used in your HTML */
+.mdt-nav-btn {
+    border: none;
+    outline: none;
+    text-align: left;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-sub);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.08s ease;
+}
+
+.mdt-nav-btn:hover {
+    background: rgba(15, 23, 42, 0.85);
+    color: var(--text-main);
+}
+
+.mdt-nav-btn.active {
+    background: linear-gradient(135deg, #0ea5e9, #22c55e);
+    color: #0f172a;
+    font-weight: 600;
+    transform: translateY(-1px);
+}
+
+/* SIDEBAR FOOTER BUTTONS (status/panic/close reuse .btn-*) */
+.btn,
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.btn-ghost {
+    font-family: inherit;
+}
+
+.btn-sm {
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 999px;
+}
+
+/* ---------- MAIN ---------- */
+.mdt-main {
+    flex: 1;
+    background:
+        radial-gradient(circle at top right, rgba(56, 189, 248, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.12) 0%, transparent 45%),
+        #020617;
+    padding: 18px 20px 18px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.mdt-page {
+    display: none;
+    height: 100%;
+}
+
+.mdt-page.active {
+    display: block;
+}
+
+/* PAGE HEADER (optional)*/
+.mdt-page-header {
+    margin-bottom: 16px;
+}
+
+.mdt-page-header h1 {
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.mdt-page-header p {
+    font-size: 13px;
+    color: var(--text-sub);
+    margin-top: 2px;
+}
+
+/* ---------- GRID / CARDS ---------- */
+.mdt-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    height: 100%;
+}
+
+.mdt-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: 14px 16px;
+    border: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* header/body inside cards */
+.mdt-card-header {
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.mdt-card-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* STATUS PILL */
+.mdt-status-pill {
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: var(--accent-soft);
+    border: 1px solid rgba(56, 189, 248, 0.6);
+    color: #e0f2fe;
+}
+
+/* ---------- FORM / INPUTS ---------- */
+.mdt-form-inline {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.mdt-form-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mdt-form-row {
+    display: flex;
+    gap: 8px;
+}
+
+input[type="text"],
+select,
+textarea {
+    background: var(--bg-input);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-main);
+    font-size: 13px;
+    padding: 8px 9px;
+    outline: none;
+    min-width: 0;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--text-muted);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.65);
+}
+
+textarea {
+    resize: none;
+    min-height: 120px;
+    background: var(--bg-input-soft);
+}
+
+/* ---------- BUTTONS ---------- */
+.btn-primary {
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, #0ea5e9, #22c55e);
+    border: none;
+    color: #0f172a;
+    font-size: 13px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.btn-primary:hover {
+    filter: brightness(1.05);
+}
+
+.btn-secondary {
+    border-radius: 999px;
+    padding: 7px 10px;
+    font-size: 13px;
+    border: 1px solid var(--border-subtle);
+    cursor: pointer;
+    background: rgba(15, 23, 42, 0.9);
+    color: var(--text-main);
+}
+
+.btn-secondary:hover {
+    background: rgba(15, 23, 42, 1);
+}
+
+.btn-danger {
+    border-radius: 999px;
+    padding: 7px 10px;
+    font-size: 13px;
+    border: 1px solid rgba(248, 113, 113, 0.8);
+    cursor: pointer;
+    background: var(--danger-soft);
+    color: #fecaca;
+}
+
+.btn-danger:hover {
+    background: rgba(248, 113, 113, 0.22);
+}
+
+.btn-ghost {
+    border-radius: 999px;
+    padding: 7px 10px;
+    font-size: 13px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-sub);
+}
+
+.btn-ghost:hover {
+    background: rgba(15, 23, 42, 0.85);
+}
+
+/* tiny buttons inside rows */
+.btn-xs {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 999px;
+}
+
+/* ---------- LISTS ---------- */
+.mdt-list {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.mdt-row {
+    border-radius: var(--radius-md);
+    padding: 8px 10px;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid var(--border-subtle);
+}
+
+.mdt-row-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+}
+
+.mdt-row-title {
+    font-weight: 600;
+}
+
+.mdt-row-tag {
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 1);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: var(--text-sub);
+}
+
+.mdt-row-meta {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-sub);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+}
+
+.mdt-row-body {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-main);
+}
+
+.mdt-row-actions {
+    margin-top: 6px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* EMPTY STATE */
+.mdt-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px 2px;
+}
+
+/* ---------- LIVE CHAT ---------- */
+.mdt-chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.mdt-chat-messages,
+.livechat-messages {
+    flex: 1;
+    min-height: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 4px 2px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chat-line {
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.chat-meta {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.chat-bubble {
+    align-self: flex-start;
+    background: rgba(15, 23, 42, 0.95);
+    border-radius: 10px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-subtle);
+}
+
+.chat-bubble.me {
+    align-self: flex-end;
+    background: var(--accent-soft);
+    border-color: rgba(56, 189, 248, 0.6);
+}
+
+/* ---------- SCROLLBARS ---------- */
+.mdt-list::-webkit-scrollbar,
+.mdt-chat-messages::-webkit-scrollbar,
+.livechat-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+.mdt-list::-webkit-scrollbar-thumb,
+.mdt-chat-messages::-webkit-scrollbar-thumb,
+.livechat-messages::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+    border-radius: 999px;
+}
+
+/* ---------- RESIZE HANDLE ---------- */
+.mdt-resize-handle {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    width: 16px;
+    height: 16px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.98);
+    border: 1px solid var(--border-subtle);
+    cursor: se-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: var(--text-sub);
+}
+
+.mdt-resize-handle::before {
+    content: "⋰";
+}
+/* ---------- ADMIN PASSWORD INPUT WITH ICON ---------- */
+.mdt-input-with-icon {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-input);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    padding-left: 9px;
+    min-width: 0;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.mdt-input-with-icon:hover {
+    background: rgba(15, 23, 42, 0.96);
+}
+
+.mdt-input-with-icon:focus-within {
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.65);
+}
+
+.mdt-input-icon {
+    font-size: 14px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-strong);
+}
+
+.mdt-input-with-icon input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-main);
+    font-size: 13px;
+    padding: 8px 9px 8px 4px;
+}
+
+/* ---------- FLAGS CHECKBOXES ---------- */
+.mdt-flags-checklist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+}
+
+.mdt-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-main);
+    cursor: pointer;
+    user-select: none;
+}
+
+/* hide default checkbox */
+.mdt-checkbox input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* custom box */
+.mdt-checkbox-box {
+    width: 16px;
+    height: 16px;
+    border-radius: 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.9);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+}
+
+/* checkmark */
+.mdt-checkbox-box::after {
+    content: "✓";
+    font-size: 11px;
+    color: #0f172a;
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* label text */
+.mdt-checkbox-label {
+    color: var(--text-sub);
+}
+
+/* checked state */
+.mdt-checkbox input:checked + .mdt-checkbox-box {
+    background: linear-gradient(135deg, #0ea5e9, #22c55e);
+    border-color: rgba(56, 189, 248, 0.9);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.6);
+    transform: translateY(-0.5px);
+}
+
+.mdt-checkbox input:checked + .mdt-checkbox-box::after {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.mdt-checkbox input:checked + .mdt-checkbox-box + .mdt-checkbox-label {
+    color: var(--text-main);
+}
+
+/* focus ring for keyboard nav */
+.mdt-checkbox input:focus-visible + .mdt-checkbox-box {
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.9);
+}
