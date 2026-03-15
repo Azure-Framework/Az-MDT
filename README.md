@@ -435,7 +435,7 @@ http://YOUR_IP:30120/RESOURCE_NAME/
 Example:
 
 ```txt
-http://76.144.200.195:30120/az_mdt/
+http://YOUR_SERVER_IP:30120/az_mdt/
 ```
 
 ### Important
@@ -444,13 +444,13 @@ Use the **trailing slash** on `publicBaseUrl`.
 Correct:
 
 ```txt
-http://76.144.200.195:30120/az_mdt/
+http://YOUR_SERVER_IP:30120/az_mdt/
 ```
 
 Wrong:
 
 ```txt
-http://76.144.200.195:30120/az_mdt
+http://YOUR_SERVER_IP:30120/az_mdt
 ```
 
 ### Step 3: Configure Discord Developer Portal
@@ -472,7 +472,7 @@ http://YOUR_IP:30120/RESOURCE_NAME/auth/callback
 ### Example redirect
 
 ```txt
-http://76.144.200.195:30120/az_mdt/auth/callback
+http://YOUR_SERVER_IP:30120/az_mdt/auth/callback
 ```
 
 ### Step 4: Restart the resource
@@ -683,8 +683,8 @@ Check all of the following:
 Example:
 
 ```lua
-publicBaseUrl = "http://76.144.200.195:30120/az_mdt/"
-redirectUri = "http://76.144.200.195:30120/az_mdt/auth/callback"
+publicBaseUrl = "http://YOUR_SERVER_IP:30120/az_mdt/"
+redirectUri = "http://YOUR_SERVER_IP:30120/az_mdt/auth/callback"
 ```
 
 </details>
