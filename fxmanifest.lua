@@ -3,7 +3,7 @@ game 'gta5'
 
 name 'az_mdt'
 author 'Azure(TheStoicBear)'
-description 'Mobile Data Terminal integrated with Az-Framework (basic DB + UI wiring)'
+description 'Standalone Mobile Data Terminal with MySQL + ACE permission support'
 
 ui_page 'html/index.html'
 
@@ -14,17 +14,17 @@ files {
     'html/config/*.json',
     'html/config/config.js',
     'html/img/*.png',
-    'html/img/*.jpg'
+    'html/img/*.jpg',
+    'config/postals.json'
 }
 
 client_scripts {
-    'config.lua',
-    'client.lua'
+    'config/config.lua',
+    'source/client.lua'
 }
 
 server_scripts {
-    '@oxmysql/lib/MySQL.lua',
-    'schema.lua',
-    'config.lua',
-    'server.lua'
+    'source/schema.lua',
+    'config/config.lua',
+    'source/server.lua'
 }
