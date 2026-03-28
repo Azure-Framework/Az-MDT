@@ -1,19 +1,9 @@
--- schema.lua
--- Simple schema creator for Az-MDT tables.
--- Make sure this file is listed in fxmanifest BEFORE your main server.lua:
--- server_scripts {
---   'schema.lua',
---   'server.lua'
--- }
 
 local RESOURCE_NAME = GetCurrentResourceName()
 
 Config = Config or {}
 if Config.Debug == nil then Config.Debug = true end
 
--------------------------------------------------
--- DEBUG
--------------------------------------------------
 local function dprint(...)
     if not Config.Debug then return end
     local args = { ... }
@@ -21,9 +11,6 @@ local function dprint(...)
     print(("^3[%s SCHEMA]^7 %s"):format(RESOURCE_NAME, table.concat(args, " ")))
 end
 
--------------------------------------------------
--- DB DRIVER WRAPPER (oxmysql OR mysql-async)
--------------------------------------------------
 local DB = {}
 
 local hasOx = GetResourceState("oxmysql") == "started"
@@ -50,10 +37,6 @@ function DB.execute(query, params, cb)
         cb(0)
     end
 end
-
--------------------------------------------------
--- SCHEMA STATEMENTS
--------------------------------------------------
 
 local schemaStatements = {
     {
@@ -186,10 +169,6 @@ local schemaStatements = {
         ]]
     }
 }
-
--------------------------------------------------
--- ENSURE SCHEMA ON RESOURCE START
--------------------------------------------------
 
 local function ensureSchema()
     dprint("Ensuring MDT schema...")

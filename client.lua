@@ -14,7 +14,19 @@ local jsonEncode = (json and json.encode) or EncodeJson
 
 local mdtOpen    = false
 local unitsCache = {}
+local isPolice = false
 
+RegisterNetEvent("az_mdt:client:setAuthorized", function(state)
+    isPolice = state == true
+    if not isPolice and mdtOpen then
+        closeMDT()
+    end
+end)
+
+AddEventHandler("onClientResourceStart", function(res)
+    if res ~= RESOURCE_NAME then return end
+    TriggerServerEvent("az_mdt:RequestAuth")
+end)
 -------------------------------------------------
 -- NUI OPEN / CLOSE
 -------------------------------------------------
@@ -49,6 +61,10 @@ local function sendCloseMessages()
 end
 
 local function openMDT(ctx)
+    if not isPolice then
+        dprint("Blocked MDT open: not police.")
+        return
+    end
     if mdtOpen then return end
     mdtOpen = true
 
@@ -77,9 +93,9 @@ local function closeMDT()
 end
 
 RegisterNetEvent("az_mdt:client:open", function(ctx)
+    if not isPolice then return end
     openMDT(ctx or {})
 end)
-
 RegisterNUICallback("mdt:close", function(_, cb)
     closeMDT()
     cb({ ok = true })
@@ -111,9 +127,17 @@ end)
 -- NUI CALLBACK REGISTRATION HELPER
 -------------------------------------------------
 
-local function registerAliases(aliases, fn)
+local function registerAliases(aliases, fn, opts)
+    opts = opts or {}
     for _, name in ipairs(aliases) do
-        RegisterNUICallback(name, fn)
+        RegisterNUICallback(name, function(data, cb)
+            if opts.policeOnly and not isPolice then
+                dprint(("Blocked NUI callback '%s' (not police)"):format(name))
+                if cb then cb({ ok = false, error = "not_police" }) end
+                return
+            end
+            fn(data, cb)
+        end)
     end
 end
 
@@ -126,8 +150,7 @@ registerAliases({ "nameSearch", "NameSearch", "searchName", "SearchName" }, func
     dprint("NUI NameSearch:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:NameSearch", data or {})
     cb({ ok = true })
-end)
-
+end, { policeOnly = true })
 -- Quick notes / flags / warrants
 registerAliases({ "CreateQuickNote", "createQuickNote" }, function(data, cb)
     dprint("NUI CreateQuickNote:", jsonEncode(data or {}))

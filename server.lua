@@ -4,9 +4,55 @@ local fw            = exports['Az-Framework']
 Config = Config or {}
 if Config.Debug == nil then Config.Debug = true end
 
--------------------------------------------------
--- DEBUG
--------------------------------------------------
+
+Config.PoliceJobs = Config.PoliceJobs or { "police" } -- add more: { "police","sheriff","state" }
+
+local function getPlayerJobLower(src)
+    local ok, job = pcall(function()
+        return exports['Az-Framework']:getPlayerJob(src)
+    end)
+    if not ok then job = nil end
+    job = job and tostring(job) or "civ"
+    return string.lower(job)
+end
+
+local function isPolice(src)
+    local j = getPlayerJobLower(src)
+    for _, allowed in ipairs(Config.PoliceJobs) do
+        if j == string.lower(allowed) then
+            return true
+        end
+    end
+    return false
+end
+
+local function deny(src, msg)
+    TriggerClientEvent("az_mdt:client:setAuthorized", src, false)
+    TriggerClientEvent("az_mdt:client:notify", src, {
+        type = "error",
+        message = msg or "You are not authorized to use MDT."
+    })
+end
+
+local function requirePolice(src, actionName)
+    if not isPolice(src) then
+        deny(src, ("Blocked: %s (police only)."):format(actionName or "action"))
+        return false
+    end
+    TriggerClientEvent("az_mdt:client:setAuthorized", src, true)
+    return true
+end
+
+-- Send an event ONLY to police players
+local function TriggerPoliceEvent(eventName, ...)
+    for _, sid in ipairs(GetPlayers()) do
+        local src = tonumber(sid)
+        if src and isPolice(src) then
+            TriggerClientEvent(eventName, src, ...)
+        end
+    end
+end
+
 local function dprint(...)
     if not Config.Debug then return end
     local args = { ... }
@@ -14,9 +60,6 @@ local function dprint(...)
     print(("^3[%s S]^7 %s"):format(RESOURCE_NAME, table.concat(args, " ")))
 end
 
--------------------------------------------------
--- DB DRIVER WRAPPER (oxmysql OR mysql-async)
--------------------------------------------------
 local DB = {}
 
 local hasOx = GetResourceState("oxmysql") == "started"
@@ -72,10 +115,6 @@ function DB.execute(query, params, cb)
     end
 end
 
--------------------------------------------------
--- HELPERS
--------------------------------------------------
-
 local function trim(s)
     if not s then return "" end
     return (s:gsub("^%s+", ""):gsub("%s+$", ""))
@@ -104,10 +143,6 @@ local function buildPlaceholders(count)
     for i = 1, count do t[i] = "?" end
     return table.concat(t, ",")
 end
-
--------------------------------------------------
--- PLAYER / FRAMEWORK HELPERS
--------------------------------------------------
 
 local function getDiscordId(src)
     local id = fw:getDiscordID(src)
@@ -194,9 +229,6 @@ local function loadCharacterWithMugshot(discordId, charId, cb)
     end)
 end
 
--------------------------------------------------
--- INTERNAL AFFAIRS / LAST SEEN HELPERS
--------------------------------------------------
 
 local function logAction(src, action, target, meta)
     local officerName    = GetPlayerName(src) or ("src " .. tostring(src))
@@ -233,25 +265,18 @@ local function updateLastSeen(charid)
     ]], { charid })
 end
 
--------------------------------------------------
--- UNITS / CALLS STATE
--------------------------------------------------
-
 local Units    = {}  -- [src] = { id, name, department, callsign, status }
 local UnitMeta = {}  -- [src] = officer context
 
-local Calls       = {}  -- [id] = call table
-local NextCallId  = 1
+local Calls      = {}  -- [id] = call table
+local NextCallId = 1
 
 local function broadcastUnits()
     local arr = {}
     for _, u in pairs(Units) do
         arr[#arr + 1] = u
     end
-
-    TriggerClientEvent("az_mdt:client:unitsSnapshot", -1, {
-        units = arr
-    })
+    TriggerPoliceEvent("az_mdt:client:unitsSnapshot", { units = arr })
 end
 
 local function setUnitStatus(src, status, ctx)
@@ -283,16 +308,21 @@ local function snapshotCalls()
 end
 
 local function broadcastCalls()
-    TriggerClientEvent("az_mdt:client:callsSnapshot", -1, snapshotCalls())
+    TriggerPoliceEvent("az_mdt:client:callsSnapshot", snapshotCalls())
 end
 
--------------------------------------------------
--- MDT OPEN
--------------------------------------------------
+RegisterNetEvent("az_mdt:RequestAuth", function()
+    local src = source
+    TriggerClientEvent("az_mdt:client:setAuthorized", src, isPolice(src))
+end)
 
 RegisterCommand("mdt", function(src)
     if src == 0 then
         print("mdt command is player only")
+        return
+    end
+
+    if not requirePolice(src, "/mdt") then
         return
     end
 
@@ -319,19 +349,20 @@ RegisterCommand("mdt", function(src)
             updateLastSeen(ctx.charid)
         end
 
+        TriggerClientEvent("az_mdt:client:setAuthorized", src, true)
         TriggerClientEvent("az_mdt:client:open", src, ctx)
         TriggerClientEvent("az_mdt:client:callsSnapshot", src, snapshotCalls())
+
         broadcastUnits()
+        broadcastCalls()
     end)
 end, false)
 
--------------------------------------------------
--- NAME SEARCH
--------------------------------------------------
 
 RegisterNetEvent("az_mdt:NameSearch", function(data)
-    local src  = source
-    data       = data or {}
+    local src = source
+    if not requirePolice(src, "NameSearch") then return end
+    data = data or {}
 
     local first = trim(data.first or "")
     local last  = trim(data.last or "")
@@ -351,7 +382,6 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
 
     dprint(("NameSearch from %d term='%s'"):format(src, term))
 
-    -- 1) MAIN CHARACTER ROWS + FLAGS + LAST SEEN + MUGSHOT
     DB.fetchAll([[
         SELECT
             uc.id,
@@ -385,7 +415,6 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
             row.flags_json = nil
         end
 
-        -- 2) QUICK NOTES FOR THOSE NAMES
         DB.fetchAll([[
             SELECT target_value, note, created_at
             FROM mdt_quick_notes
@@ -410,7 +439,6 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
                 end
             end
 
-            -- 3) GENERIC RECORDS (mdt_id_records) FOR NAMES
             DB.fetchAll([[
                 SELECT id, target_type, target_value, rtype, title, description, timestamp
                 FROM mdt_id_records
@@ -441,10 +469,6 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
     end)
 end)
 
--------------------------------------------------
--- PUBLIC LAST-SEEN EVENT (OPTIONAL FOR OTHER RESOURCES)
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:UpdateLastSeen", function(charid)
     local src = source
     if not charid then
@@ -455,12 +479,9 @@ RegisterNetEvent("az_mdt:UpdateLastSeen", function(charid)
     updateLastSeen(charid)
 end)
 
--------------------------------------------------
--- PLATE / VEHICLE SEARCH
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:PlateSearch", function(data)
     local src = source
+    if not requirePolice(src, "PlateSearch") then return end
     data = data or {}
 
     local plate = trim(data.plate or data.Plate or data.term)
@@ -528,12 +549,9 @@ RegisterNetEvent("az_mdt:PlateSearch", function(data)
     end)
 end)
 
--------------------------------------------------
--- WEAPON SEARCH (stub – returns empty)
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:WeaponSearch", function(data)
     local src = source
+    if not requirePolice(src, "WeaponSearch") then return end
     data = data or {}
     local serial = trim(data.serial or data.weapon or data.term)
 
@@ -556,12 +574,9 @@ RegisterNetEvent("az_mdt:WeaponSearch", function(data)
     })
 end)
 
--------------------------------------------------
--- BOLOS
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:RequestBolos", function()
     local src = source
+    if not requirePolice(src, "RequestBolos") then return end
     dprint("RequestBolos from", src)
 
     DB.fetchAll([[
@@ -581,6 +596,7 @@ end)
 
 RegisterNetEvent("az_mdt:CreateBolo", function(payload)
     local src = source
+    if not requirePolice(src, "CreateBolo") then return end
     payload = payload or {}
 
     local boloType = trim(payload.type or payload.boloType or "vehicle")
@@ -606,7 +622,8 @@ RegisterNetEvent("az_mdt:CreateBolo", function(payload)
             row.body = jsonDecode(row.data) or {}
             row.data = nil
 
-            TriggerClientEvent("az_mdt:client:boloCreated", -1, row)
+            -- POLICE ONLY BROADCAST
+            TriggerPoliceEvent("az_mdt:client:boloCreated", row)
 
             logAction(src, "bolo_create", ("BOLO #" .. tostring(insertId)), {
                 type  = boloType,
@@ -616,12 +633,9 @@ RegisterNetEvent("az_mdt:CreateBolo", function(payload)
     end)
 end)
 
--------------------------------------------------
--- REPORTS + MDT_ID_RECORDS MIRROR
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:RequestReports", function()
     local src = source
+    if not requirePolice(src, "RequestReports") then return end
     dprint("RequestReports from", src)
 
     DB.fetchAll([[
@@ -641,6 +655,7 @@ end)
 
 RegisterNetEvent("az_mdt:CreateReport", function(payload)
     local src = source
+    if not requirePolice(src, "CreateReport") then return end
     payload = payload or {}
 
     local rType = trim(payload.type or payload.reportType or "incident")
@@ -672,7 +687,8 @@ RegisterNetEvent("az_mdt:CreateReport", function(payload)
             row.body = jsonDecode(row.data) or {}
             row.data = nil
 
-            TriggerClientEvent("az_mdt:client:reportCreated", -1, row)
+            -- POLICE ONLY BROADCAST
+            TriggerPoliceEvent("az_mdt:client:reportCreated", row)
 
             logAction(src, "report_create", ("Report #" .. tostring(insertId)), {
                 type        = rType,
@@ -697,12 +713,9 @@ RegisterNetEvent("az_mdt:CreateReport", function(payload)
     end
 end)
 
--------------------------------------------------
--- QUICK NOTES (CITIZENS / VEHICLES)
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:CreateQuickNote", function(payload)
     local src = source
+    if not requirePolice(src, "CreateQuickNote") then return end
     payload = payload or {}
 
     local targetType  = trim(payload.targetType or payload.target_type or "name")
@@ -740,10 +753,6 @@ RegisterNetEvent("az_mdt:CreateQuickNote", function(payload)
     end)
 end)
 
--------------------------------------------------
--- IDENTITY FLAGS (OFFICER SAFETY / ARMED / GANG / MENTAL HEALTH)
--------------------------------------------------
-
 local VALID_FLAGS = {
     officer_safety = true,
     armed          = true,
@@ -753,6 +762,7 @@ local VALID_FLAGS = {
 
 RegisterNetEvent("az_mdt:SetIdentityFlags", function(payload)
     local src = source
+    if not requirePolice(src, "SetIdentityFlags") then return end
     payload = payload or {}
 
     local targetType  = trim(payload.targetType or payload.target_type or "name")
@@ -799,12 +809,9 @@ RegisterNetEvent("az_mdt:SetIdentityFlags", function(payload)
     end)
 end)
 
--------------------------------------------------
--- WARRANTS
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:CreateWarrant", function(payload)
     local src = source
+    if not requirePolice(src, "CreateWarrant") then return end
     payload = payload or {}
 
     local targetName   = trim(payload.targetName or payload.name or "")
@@ -845,6 +852,7 @@ end)
 
 RegisterNetEvent("az_mdt:RequestWarrants", function()
     local src = source
+    if not requirePolice(src, "RequestWarrants") then return end
 
     DB.fetchAll([[
         SELECT id, target_name, target_charid, reason, status,
@@ -857,12 +865,9 @@ RegisterNetEvent("az_mdt:RequestWarrants", function()
     end)
 end)
 
--------------------------------------------------
--- INTERNAL AFFAIRS / ACTION LOG
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:RequestActionLog", function()
     local src = source
+    if not requirePolice(src, "RequestActionLog") then return end
 
     DB.fetchAll([[
         SELECT id, officer_name, officer_discord, action, target, meta, created_at
@@ -878,12 +883,9 @@ RegisterNetEvent("az_mdt:RequestActionLog", function()
     end)
 end)
 
--------------------------------------------------
--- EMPLOYEES
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:ViewEmployees", function()
     local src = source
+    if not requirePolice(src, "ViewEmployees") then return end
 
     loadOfficerContext(src, function(ctx)
         if not ctx then
@@ -913,21 +915,19 @@ RegisterNetEvent("az_mdt:ViewEmployees", function()
     end)
 end)
 
--------------------------------------------------
--- UNITS / STATUS / PANIC / HOSPITAL
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:SetUnitStatus", function(status)
     local src = source
+    if not requirePolice(src, "SetUnitStatus") then return end
     status = tostring(status or "AVAILABLE")
     dprint(("UnitStatus %d -> %s"):format(src, status))
 
     setUnitStatus(src, status, UnitMeta[src])
-    TriggerClientEvent("az_mdt:client:unitStatus", -1, src, status)
+    TriggerPoliceEvent("az_mdt:client:unitStatus", src, status)
 end)
 
 RegisterNetEvent("az_mdt:Panic", function()
     local src = source
+    if not requirePolice(src, "Panic") then return end
     dprint("Panic button from", src)
 
     local ctx = UnitMeta[src] or {}
@@ -942,9 +942,9 @@ RegisterNetEvent("az_mdt:Panic", function()
         time     = os.date("%H:%M:%S")
     }
 
-    TriggerClientEvent("az_mdt:client:panic", -1, payload)
+    TriggerPoliceEvent("az_mdt:client:panic", payload)
 
-    TriggerClientEvent("az_mdt:client:notify", -1, {
+    TriggerPoliceEvent("az_mdt:client:notify", {
         type    = "panic",
         message = ("PANIC BUTTON – %s"):format(officerName)
     })
@@ -954,20 +954,21 @@ end)
 
 RegisterNetEvent("az_mdt:Hospital", function()
     local src = source
+    if not requirePolice(src, "Hospital") then return end
     dprint("Hospital button from", src)
-    TriggerClientEvent("az_mdt:client:hospital", -1, src)
+    TriggerPoliceEvent("az_mdt:client:hospital", src)
 end)
 
 RegisterNetEvent("az_mdt:RequestUnits", function()
     local src = source
+    if not requirePolice(src, "RequestUnits") then return end
+
     local arr = {}
     for _, u in pairs(Units) do
         arr[#arr + 1] = u
     end
 
-    TriggerClientEvent("az_mdt:client:unitsSnapshot", src, {
-        units = arr
-    })
+    TriggerClientEvent("az_mdt:client:unitsSnapshot", src, { units = arr })
 end)
 
 AddEventHandler("playerDropped", function()
@@ -976,10 +977,6 @@ AddEventHandler("playerDropped", function()
     UnitMeta[src] = nil
     broadcastUnits()
 end)
-
--------------------------------------------------
--- 911 CALLS
--------------------------------------------------
 
 RegisterNetEvent("az_mdt:Create911", function(payload)
     local src = source
@@ -1015,16 +1012,19 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
         message  = message
     })
 
-    TriggerClientEvent("az_mdt:client:callUpdated", -1, call)
+    -- POLICE ONLY BROADCAST (stops civ TTS/dispatch)
+    TriggerPoliceEvent("az_mdt:client:callUpdated", call)
 end)
 
 RegisterNetEvent("az_mdt:RequestCalls", function()
     local src = source
+    if not requirePolice(src, "RequestCalls") then return end
     TriggerClientEvent("az_mdt:client:callsSnapshot", src, snapshotCalls())
 end)
 
 RegisterNetEvent("az_mdt:AttachToCall", function(callId)
     local src = source
+    if not requirePolice(src, "AttachToCall") then return end
     callId = tonumber(callId) or 0
     local call = Calls[callId]
     if not call then return end
@@ -1050,11 +1050,13 @@ RegisterNetEvent("az_mdt:AttachToCall", function(callId)
     call.status = "ENROUTE"
     dprint(("AttachToCall #%d by %s"):format(callId, ctx.name or src))
 
-    TriggerClientEvent("az_mdt:client:callUpdated", -1, call)
+    -- POLICE ONLY BROADCAST
+    TriggerPoliceEvent("az_mdt:client:callUpdated", call)
 end)
 
 RegisterNetEvent("az_mdt:SetCallWaypoint", function(callId)
     local src = source
+    if not requirePolice(src, "SetCallWaypoint") then return end
     callId = tonumber(callId) or 0
     local call = Calls[callId]
     if not call or not call.coords or not call.coords.x or not call.coords.y then return end
@@ -1062,25 +1064,15 @@ RegisterNetEvent("az_mdt:SetCallWaypoint", function(callId)
     TriggerClientEvent("az_mdt:client:setWaypoint", src, call.coords)
 end)
 
--------------------------------------------------
--- LIVE CHAT (simple relay)
--------------------------------------------------
-
--------------------------------------------------
--- LIVE CHAT (persistent via DB)
--------------------------------------------------
-
-local ChatHistory = {}        -- last N messages in memory
-local CHAT_MAX    = 100       -- how many messages we keep & send to NUI
+local ChatHistory = {}
+local CHAT_MAX    = 100
 
 local function pushChatMessage(msg, skipDb)
-    -- keep in-memory buffer trimmed
     ChatHistory[#ChatHistory + 1] = msg
     if #ChatHistory > CHAT_MAX then
         table.remove(ChatHistory, 1)
     end
 
-    -- optional: persist to DB (skipped when we're loading from DB)
     if not skipDb then
         DB.insert([[
             INSERT INTO mdt_live_chat (sender, source, message, time)
@@ -1104,7 +1096,6 @@ local function loadChatHistoryFromDb()
         rows = rows or {}
         ChatHistory = {}
 
-        -- rows are newest → oldest, we want oldest → newest in ChatHistory
         for i = #rows, 1, -1 do
             local r = rows[i]
             pushChatMessage({
@@ -1112,7 +1103,7 @@ local function loadChatHistoryFromDb()
                 source  = r.source  or "",
                 message = r.message or "",
                 time    = r.time    or ""
-            }, true) -- true = don't re-insert into DB
+            }, true)
         end
 
         dprint(("LiveChat: loaded %d messages from DB."):format(#ChatHistory))
@@ -1137,6 +1128,7 @@ end
 
 RegisterNetEvent("az_mdt:LiveChatSend", function(data)
     local src = source
+    if not requirePolice(src, "LiveChatSend") then return end
     data = data or {}
 
     local ctx = UnitMeta[src] or {}
@@ -1152,25 +1144,21 @@ RegisterNetEvent("az_mdt:LiveChatSend", function(data)
         time    = os.date("%H:%M:%S")
     }
 
-    -- add to in-memory buffer + persist to DB
     pushChatMessage(payload, false)
 
-    -- broadcast to all MDT clients
-    TriggerClientEvent("az_mdt:client:liveChatMessage", -1, payload)
+    -- POLICE ONLY BROADCAST
+    TriggerPoliceEvent("az_mdt:client:liveChatMessage", payload)
 end)
 
 RegisterNetEvent("az_mdt:RequestChatHistory", function()
     local src = source
+    if not requirePolice(src, "RequestChatHistory") then return end
     TriggerClientEvent("az_mdt:client:liveChatHistory", src, ChatHistory)
 end)
 
-
--------------------------------------------------
--- ADMIN ACTIONS
--------------------------------------------------
-
 RegisterNetEvent("az_mdt:AdminDeleteBolo", function(id)
     local src = source
+    if not requirePolice(src, "AdminDeleteBolo") then return end
     id = tonumber(id) or 0
     if id <= 0 then return end
 
@@ -1188,13 +1176,14 @@ RegisterNetEvent("az_mdt:AdminDeleteBolo", function(id)
                 row.body = jsonDecode(row.data) or {}
                 row.data = nil
             end
-            TriggerClientEvent("az_mdt:client:boloList", -1, rows)
+            TriggerPoliceEvent("az_mdt:client:boloList", rows)
         end)
     end)
 end)
 
 RegisterNetEvent("az_mdt:AdminDeleteReport", function(id)
     local src = source
+    if not requirePolice(src, "AdminDeleteReport") then return end
     id = tonumber(id) or 0
     if id <= 0 then return end
 
@@ -1212,13 +1201,14 @@ RegisterNetEvent("az_mdt:AdminDeleteReport", function(id)
                 row.body = jsonDecode(row.data) or {}
                 row.data = nil
             end
-            TriggerClientEvent("az_mdt:client:reportList", -1, rows)
+            TriggerPoliceEvent("az_mdt:client:reportList", rows)
         end)
     end)
 end)
 
 RegisterNetEvent("az_mdt:AdminDeleteCall", function(id)
     local src = source
+    if not requirePolice(src, "AdminDeleteCall") then return end
     id = tonumber(id) or 0
     if id <= 0 then return end
     if not Calls[id] then return end
@@ -1232,6 +1222,7 @@ end)
 
 RegisterNetEvent("az_mdt:AdminDeleteEmployee", function(payload)
     local src = source
+    if not requirePolice(src, "AdminDeleteEmployee") then return end
     payload = payload or {}
 
     local rowId = tonumber(payload.id) or 0
@@ -1257,24 +1248,17 @@ RegisterNetEvent("az_mdt:AdminDeleteEmployee", function(payload)
             for _, row in ipairs(rows) do
                 row.callsign = row.callsign or ("U-" .. tostring(row.charid or "0"):sub(-3))
             end
-            TriggerClientEvent("az_mdt:client:employees", -1, rows)
+            TriggerPoliceEvent("az_mdt:client:employees", rows)
         end)
     end)
 end)
-
--------------------------------------------------
--- RESOURCE START
--------------------------------------------------
 
 AddEventHandler("onResourceStart", function(res)
     if res ~= RESOURCE_NAME then return end
 
     dprint("MySQL ready for " .. RESOURCE_NAME)
 
-    -- Make sure the chat table exists
     ensureLiveChatTable()
-
-    -- Reload last N messages into memory so RequestChatHistory works
     loadChatHistoryFromDb()
 
     dprint("Schema ensured and live chat history loaded.")
