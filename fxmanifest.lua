@@ -1,7 +1,7 @@
 fx_version 'cerulean'
 game 'gta5'
 
-name 'Az-MDT'
+name 'az_mdt'
 author 'Azure(TheStoicBear)'
 description 'Standalone Mobile Data Terminal with MySQL + ACE permission support'
 
@@ -16,7 +16,8 @@ files {
     'html/config/config.js',
     'html/img/*.png',
     'html/img/*.jpg',
-    'config/postals.json'
+    'config/postals.json',
+    'config/live_map_icons.json'
 }
 
 client_scripts {

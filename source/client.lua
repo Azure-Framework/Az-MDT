@@ -16,6 +16,153 @@ local function trim(value)
     return tostring(value or ''):gsub('^%s+', ''):gsub('%s+$', '')
 end
 
+local function stripDispatchTokenPrefix(value)
+    local cleaned = trim(value)
+    if cleaned == '' then return '' end
+    cleaned = cleaned:gsub('^(%b[])%s*', '')
+    cleaned = cleaned:gsub('^(%b())%s*', '')
+    cleaned = cleaned:gsub('^(%b{})%s*', '')
+    return trim(cleaned)
+end
+
+local function prettifyServiceLabel(value)
+    local raw = trim(value)
+    if raw == '' then return 'Call' end
+    local lowerRaw = string.lower(raw)
+    if lowerRaw == 'ems' then return 'EMS' end
+    if lowerRaw == 'leo' or lowerRaw == '5pd' then return 'Police' end
+    if lowerRaw == 'fire' then return 'Fire' end
+    if lowerRaw == 'parkranger' or lowerRaw == 'park_ranger' or lowerRaw == 'park-ranger' or lowerRaw == 'ranger' or lowerRaw == 'parkrangers' then
+        return 'Park Ranger'
+    end
+    local pretty = raw:gsub('[_%-]+', ' ')
+    pretty = pretty:gsub("(%a)([%w_']*)", function(first, rest)
+        return string.upper(first) .. string.lower(rest or '')
+    end)
+    return pretty
+end
+
+local function currentStreetLabelFromCoords(coords)
+    if type(coords) ~= 'table' then return '', '', '' end
+    local x, y, z = tonumber(coords.x), tonumber(coords.y), tonumber(coords.z) or 0.0
+    if not x or not y then return '', '', '' end
+    local streetHash, crossHash = GetStreetNameAtCoord(x, y, z)
+    local street = trim(GetStreetNameFromHashKey(streetHash) or '')
+    local cross = (crossHash and crossHash ~= 0) and trim(GetStreetNameFromHashKey(crossHash) or '') or ''
+    local label = street
+    if cross ~= '' then
+        label = (label ~= '' and (label .. ' / ' .. cross)) or cross
+    end
+    return street, cross, label
+end
+
+
+local function callUnitsLabel(units)
+    if type(units) ~= 'table' then return '' end
+    local labels = {}
+    for _, unit in ipairs(units) do
+        if type(unit) == 'table' then
+            local callsign = trim(unit.callsign or unit.unit or unit.name or '')
+            if callsign ~= '' then
+                labels[#labels + 1] = callsign
+            end
+        end
+    end
+    return table.concat(labels, ', ')
+end
+
+local function buildQuickRespondSpeech(call)
+    call = call or {}
+    local segments = {}
+    local service = prettifyServiceLabel(call.service or call.type or '')
+    local id = tostring(call.id or '')
+    if service ~= '' and id ~= '' then
+        segments[#segments + 1] = ('%s call %s.'):format(service, id)
+    elseif id ~= '' then
+        segments[#segments + 1] = ('Call %s.'):format(id)
+    end
+
+    local status = trim(call.status or '')
+    if status ~= '' then segments[#segments + 1] = ('Status %s.'):format(status) end
+    local caller = trim(call.caller or '')
+    if caller ~= '' then segments[#segments + 1] = ('Caller %s.'):format(caller) end
+    local unitsLabel = trim(call.unitsLabel or callUnitsLabel(call.units) or '')
+    if unitsLabel ~= '' then segments[#segments + 1] = ('Units %s.'):format(unitsLabel) end
+    local createdAt = trim(call.createdAt or call.created_at or '')
+    if createdAt ~= '' then segments[#segments + 1] = ('Time %s.'):format(createdAt) end
+    local location = trim(call.location or '')
+    if location ~= '' then segments[#segments + 1] = ('Location %s.'):format(location) end
+    local details = stripDispatchTokenPrefix(call.message or call.details or call.reason or '')
+    if details ~= '' then segments[#segments + 1] = details end
+    segments[#segments + 1] = 'Press E to respond.'
+    return table.concat(segments, ' ')
+end
+
+local function drawQuickBannerText(text, x, y, scale, r, g, b, a, center, wrapStart, wrapEnd, font)
+    SetTextFont(font or 4)
+    SetTextProportional(1)
+    SetTextScale(scale, scale)
+    SetTextColour(r or 255, g or 255, b or 255, a or 255)
+    SetTextDropshadow(0, 0, 0, 0, 255)
+    SetTextEdge(1, 0, 0, 0, 180)
+    SetTextOutline()
+    SetTextCentre(center == true)
+    SetTextWrap(wrapStart or 0.28, wrapEnd or 0.72)
+    BeginTextCommandDisplayText('STRING')
+    AddTextComponentSubstringPlayerName(tostring(text or ''))
+    EndTextCommandDisplayText(x, y)
+end
+
+local function drawQuickRespondBanner(data)
+    if type(data) ~= 'table' then return end
+
+    local service = string.upper(prettifyServiceLabel(data.service or data.type or 'CALL'))
+    local callId = tostring(data.id or '?')
+    local status = string.upper(trim(data.status or 'ACTIVE'))
+    local caller = trim(data.caller or 'Dispatch')
+    local unitsLabel = trim(data.unitsLabel or callUnitsLabel(data.units) or '')
+    local createdAt = trim(data.createdAt or data.created_at or '')
+    local location = trim(data.location or 'Unknown location')
+    local details = stripDispatchTokenPrefix(data.message or data.details or data.reason or '')
+    local prompt = trim(data.prompt or 'Press E to respond')
+
+    local header = ('%s • Call #%s'):format(service ~= '' and service or 'CALL', callId)
+    local metaLeft = ('Status: %s'):format(status ~= '' and status or 'ACTIVE')
+    if caller ~= '' then metaLeft = metaLeft .. ('  •  Caller: %s'):format(caller) end
+    local metaRight = ''
+    if unitsLabel ~= '' then metaRight = ('Units: %s'):format(unitsLabel) end
+    if createdAt ~= '' then
+        metaRight = metaRight ~= '' and (metaRight .. ('  •  %s'):format(createdAt)) or createdAt
+    end
+
+    local x, y = 0.5, 0.065
+    local w, h = 0.56, 0.13
+    local accentR, accentG, accentB = 61, 130, 255
+    local serviceKey = trim(data.service or ''):lower()
+    if serviceKey == 'fire' then
+        accentR, accentG, accentB = 217, 76, 76
+    elseif serviceKey == 'ems' then
+        accentR, accentG, accentB = 61, 178, 122
+    elseif serviceKey == 'police' then
+        accentR, accentG, accentB = 61, 130, 255
+    end
+
+    DrawRect(x, y, w, h, 6, 10, 22, 210)
+    DrawRect(x, y - (h / 2) + 0.0045, w, 0.009, accentR, accentG, accentB, 235)
+    DrawRect(x, y + (h / 2) - 0.001, w, 0.002, 255, 255, 255, 25)
+
+    drawQuickBannerText(header, x, y - 0.05, 0.39, 255, 255, 255, 245, true, 0.24, 0.76, 4)
+    drawQuickBannerText(metaLeft, x, y - 0.015, 0.29, 220, 228, 244, 235, true, 0.24, 0.76, 0)
+    if metaRight ~= '' then
+        drawQuickBannerText(metaRight, x, y + 0.002, 0.29, 220, 228, 244, 235, true, 0.24, 0.76, 0)
+    end
+    drawQuickBannerText(location, x, y + 0.024, 0.32, 255, 214, 120, 245, true, 0.25, 0.75, 0)
+    if details ~= '' then
+        drawQuickBannerText(details, x, y + 0.046, 0.29, 244, 244, 244, 235, true, 0.25, 0.75, 0)
+    end
+    drawQuickBannerText(prompt, x, y + 0.071, 0.28, accentR, accentG, accentB, 245, true, 0.28, 0.72, 0)
+end
+
 local function splitNameParts(value)
     local cleaned = trim(value)
     if cleaned == '' then return '', '' end
@@ -118,8 +265,161 @@ end
 
 local mdtOpen    = false
 local unitsCache = {}
+local callsCache = {}
+local pendingQuickRespond = nil
+local quickRespondAttachState = {}
+
+local function queueQuickRespondAlert(callData)
+    callData = callData or {}
+    local callId = tonumber(callData.id) or callData.id
+    if callId == nil then return end
+    callsCache[callId] = callData
+    local quickCfg = Config.QuickRespond or {}
+    local windowMs = tonumber(quickCfg.windowMs) or 45000
+    if windowMs < 15000 then windowMs = 15000 end
+    pendingQuickRespond = {
+        id = callId,
+        expiresAt = GetGameTimer() + windowMs,
+        title = tostring(callData.notificationTitle or callData.title or ('Call #' .. tostring(callId))),
+        service = tostring(callData.service or callData.type or 'call'),
+        status = tostring(callData.status or 'ACTIVE'),
+        caller = tostring(callData.caller or 'Dispatch'),
+        location = tostring(callData.location or callData.notificationMessage or 'Unknown location'),
+        message = stripDispatchTokenPrefix(callData.message or callData.details or callData.reason or ''),
+        reason = stripDispatchTokenPrefix(callData.reason or callData.details or callData.message or ''),
+        details = stripDispatchTokenPrefix(callData.details or callData.message or callData.reason or ''),
+        units = type(callData.units) == 'table' and callData.units or {},
+        unitsLabel = tostring(callData.unitsLabel or callUnitsLabel(callData.units) or ''),
+        createdAt = tostring(callData.created_at or callData.createdAt or ''),
+        prompt = tostring(callData.prompt or 'Press E to respond'),
+        speech = buildQuickRespondSpeech(callData),
+        coords = type(callData.coords) == 'table' and callData.coords or nil,
+        raw = callData,
+        externalSource = tostring(callData.externalSource or callData.external_source or callData.sourceResource or callData.externalResource or callData.source or ''),
+        metadata = type(callData.metadata) == 'table' and callData.metadata or {}
+    }
+    dprint('QueuedQuickRespond id:', tostring(callId))
+end
 local pendingExternalPrefill = nil
 local pendingExternalPrefillSeq = 0
+
+local function lowerTrim(value)
+    return string.lower(trim(value))
+end
+
+local function isPlayerAttachedToCachedCall(callId)
+    local id = tonumber(callId) or callId
+    local call = id ~= nil and callsCache[id] or nil
+    if type(call) ~= 'table' or type(call.units) ~= 'table' then return false end
+    local mySrc = GetPlayerServerId(PlayerId())
+    for _, unit in ipairs(call.units) do
+        if type(unit) == 'table' then
+            local unitId = tonumber(unit.id or unit.source or unit.sourceId or unit.unit_source)
+            if unitId and unitId == mySrc then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function clearQuickRespondAttachState(callId)
+    local id = tonumber(callId) or 0
+    if id <= 0 then return end
+    quickRespondAttachState[id] = nil
+end
+
+local function queueQuickRespondAttachRetries(callId, opts)
+    local id = tonumber(callId) or 0
+    if id <= 0 then return end
+    opts = type(opts) == 'table' and opts or {}
+    local quickCfg = Config.QuickRespond or {}
+    local externalAccepted = opts.externalAccepted == true
+    local externalSource = lowerTrim(opts.externalSource or opts.source or '')
+    local retryMs = nil
+    if externalAccepted then
+        if externalSource:find('az%-ambulance', 1, false) or externalSource:find('az_ambulance', 1, true) or externalSource:find('az%-fire', 1, false) or externalSource:find('az_fire', 1, true) then
+            retryMs = type(quickCfg.externalAttachRetryServiceMs) == 'table' and quickCfg.externalAttachRetryServiceMs or { 500, 1800, 4200 }
+        else
+            retryMs = type(quickCfg.externalAttachRetryMs) == 'table' and quickCfg.externalAttachRetryMs or { 500, 1800 }
+        end
+    else
+        retryMs = type(quickCfg.attachRetryMs) == 'table' and quickCfg.attachRetryMs or { 150, 900, 2200, 5000, 8000 }
+    end
+
+    local token = GetGameTimer()
+    quickRespondAttachState[id] = token
+
+    local function tryAttach()
+        if quickRespondAttachState[id] ~= token then return end
+        if isPlayerAttachedToCachedCall(id) then
+            clearQuickRespondAttachState(id)
+            return
+        end
+        TriggerServerEvent('az_mdt:AttachToCall', id)
+        TriggerServerEvent('az_mdt:SetCallWaypoint', id)
+    end
+
+    local immediate = (opts.immediate == true)
+    if immediate then
+        tryAttach()
+    end
+
+    for _, delay in ipairs(retryMs) do
+        local waitMs = math.max(0, tonumber(delay) or 0)
+        SetTimeout(waitMs, function()
+            if quickRespondAttachState[id] ~= token then return end
+            tryAttach()
+        end)
+    end
+end
+
+local function quickRespondAcceptExternal(callData)
+    callData = type(callData) == 'table' and callData or {}
+    local externalSource = lowerTrim(callData.externalSource or callData.external_source or callData.sourceResource or callData.externalResource or callData.source or '')
+    local metadata = type(callData.metadata) == 'table' and callData.metadata or {}
+    local location = trim(callData.location or '')
+    local _, _, streetLabel = currentStreetLabelFromCoords(callData.coords or {})
+    local derivedAddress = streetLabel ~= '' and streetLabel or location
+
+    local function toId(value)
+        if value == nil then return nil end
+        local n = tonumber(value)
+        if n and n > 0 then return n end
+        local s = trim(value)
+        return s ~= '' and s or nil
+    end
+
+    local accepted = false
+    local calloutId = toId(metadata.calloutId or metadata.requestId or callData.calloutId or callData.requestId)
+    local emsCallId = toId(metadata.emsCallId or metadata.callId or callData.emsCallId or callData.callId)
+    local fireCallId = toId(metadata.fireCallId or metadata.callId or callData.fireCallId or callData.callId)
+
+    if externalSource:find('az%-5pd', 1, false) or externalSource:find('az_5pd', 1, true) then
+        if calloutId then
+            TriggerServerEvent('az5pd:callouts:accept', calloutId)
+            accepted = true
+        end
+    elseif externalSource:find('az%-parkrangers', 1, false) or externalSource:find('az_parkrangers', 1, true) or externalSource:find('azpr', 1, true) then
+        if calloutId then
+            TriggerServerEvent('azpr:callouts:accept', calloutId)
+            accepted = true
+        end
+    elseif externalSource:find('az%-ambulance', 1, false) or externalSource:find('az_ambulance', 1, true) then
+        if emsCallId then
+            TriggerServerEvent('az_ambulance:acceptCallout', emsCallId, derivedAddress ~= '' and derivedAddress or nil)
+            accepted = true
+        end
+    elseif externalSource:find('az%-fire', 1, false) or externalSource:find('az_fire', 1, true) then
+        if fireCallId then
+            TriggerServerEvent('az_fire:acceptCallout', fireCallId, derivedAddress ~= '' and derivedAddress or nil)
+            accepted = true
+        end
+    end
+
+    return accepted
+end
+
 
 local function sendOpenMessages(ctx)
     ctx = ctx or {}
@@ -130,24 +430,10 @@ local function sendOpenMessages(ctx)
         officer = ctxJson,
         data    = ctxJson
     })
-
-    SendNUIMessage({
-        action  = "openMDT",
-        officer = ctxJson,
-        data    = ctxJson
-    })
-
-    SendNUIMessage({
-        action  = "mdt:open",
-        officer = ctxJson,
-        data    = ctxJson
-    })
 end
 
 local function sendCloseMessages()
     SendNUIMessage({ action = "close" })
-    SendNUIMessage({ action = "closeMDT" })
-    SendNUIMessage({ action = "mdt:close" })
 end
 
 local function queueExternalPrefill(prefill, delays, token)
@@ -184,6 +470,7 @@ end
 local function openMDT(ctx)
     if mdtOpen then return end
     mdtOpen = true
+    pendingQuickRespond = nil
 
     SetNuiFocus(true, true)
     SetNuiFocusKeepInput(false)
@@ -198,6 +485,7 @@ local function openMDT(ctx)
         tostring(ctx.grade or 0)
     ))
 
+    TriggerServerEvent('az_mdt:UIState', true)
     sendOpenMessages(ctx)
     if ctx.useAz5PD and ctx.az5pdAvailable then
         TriggerServerEvent('az5pd:sim:requestState')
@@ -214,6 +502,7 @@ local function closeMDT()
     SetNuiFocus(false, false)
     SetNuiFocusKeepInput(false)
 
+    TriggerServerEvent('az_mdt:UIState', false)
     dprint("Closing MDT NUI")
     pendingExternalPrefill = nil
     pendingExternalPrefillSeq = pendingExternalPrefillSeq + 1
@@ -395,6 +684,11 @@ end)
 RegisterNUICallback("closeMDT", function(_, cb)
     closeMDT()
     cb({ ok = true })
+end)
+
+AddEventHandler('onResourceStop', function(res)
+    if res ~= RESOURCE_NAME then return end
+    TriggerServerEvent('az_mdt:UIState', false)
 end)
 
 RegisterNetEvent("az_mdt:client:notify", function(data)
@@ -784,6 +1078,12 @@ registerAliases({ "RequestLeoChat", "requestLeoChat", "GetLeoChat" }, function(_
     cb({ ok = true })
 end)
 
+registerAliases({ "SaveLiveMapIcons", "saveLiveMapIcons" }, function(data, cb)
+    dprint("NUI SaveLiveMapIcons:", jsonEncode(data or {}))
+    TriggerServerEvent("az_mdt:SaveLiveMapIcons", data or {})
+    cb({ ok = true })
+end)
+
 registerAliases({ "LeoChatSend", "leoChatSend" }, function(data, cb)
     dprint("NUI LeoChatSend:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:LeoChatSend", data or {})
@@ -1004,6 +1304,53 @@ RegisterNetEvent("az_mdt:client:employees", function(list)
     })
 end)
 
+local function resolveStreetLocationFromCoords(coords)
+    if type(coords) ~= 'table' or coords.x == nil or coords.y == nil then return nil end
+    local x = tonumber(coords.x) or 0.0
+    local y = tonumber(coords.y) or 0.0
+    local z = tonumber(coords.z) or 0.0
+    local streetHash, crossHash = GetStreetNameAtCoord(x, y, z)
+    local street = trim(GetStreetNameFromHashKey(streetHash) or '')
+    local cross = (crossHash and crossHash ~= 0) and trim(GetStreetNameFromHashKey(crossHash) or '') or ''
+    if street == '' then return nil end
+    if cross ~= '' and cross ~= street then
+        return ('%s / %s'):format(street, cross)
+    end
+    return street
+end
+
+local function locationLooksLikeCoords(value)
+    value = string.lower(trim(value or ''))
+    if value == '' then return true end
+    if value == 'unknown location' or value == 'unknown address' then return true end
+    if value:match('^near%s+%-?%d+[%.%d]*%s*/%s*%-?%d+[%.%d]*$') then return true end
+    if value:match('^%-?%d+[%.%d]*%s*,%s*%-?%d+[%.%d]*$') then return true end
+    return false
+end
+
+local function enrichIncomingCall(call)
+    if type(call) ~= 'table' then return call end
+    local streetLocation = resolveStreetLocationFromCoords(call.coords)
+    if streetLocation and locationLooksLikeCoords(call.location) then
+        call.location = streetLocation
+    end
+    if streetLocation and trim(call.street or '') == '' then
+        call.street = streetLocation
+    end
+    if streetLocation and locationLooksLikeCoords(call.notificationMessage) then
+        call.notificationMessage = streetLocation
+    end
+    return call
+end
+
+local function enrichIncomingCalls(list)
+    if type(list) ~= 'table' then return list end
+    for i = 1, #list do
+        list[i] = enrichIncomingCall(list[i])
+    end
+    return list
+end
+
 RegisterNetEvent("az_mdt:client:unitsSnapshot", function(payload)
     payload = payload or {}
     unitsCache = payload.units or {}
@@ -1014,8 +1361,22 @@ RegisterNetEvent("az_mdt:client:unitsSnapshot", function(payload)
     })
 end)
 
+RegisterNetEvent("az_mdt:client:liveMapIcons", function(payload)
+    payload = payload or {}
+    SendNUIMessage({
+        action = "liveMapIcons",
+        data   = jsonEncode(payload)
+    })
+end)
+
 RegisterNetEvent("az_mdt:client:callsSnapshot", function(list)
-    list = list or {}
+    list = enrichIncomingCalls(list or {})
+    callsCache = {}
+    for _, call in ipairs(list) do
+        if type(call) == 'table' and call.id ~= nil then
+            callsCache[tonumber(call.id) or call.id] = call
+        end
+    end
     dprint("Calls snapshot count:", #list)
 
     SendNUIMessage({
@@ -1025,7 +1386,20 @@ RegisterNetEvent("az_mdt:client:callsSnapshot", function(list)
 end)
 
 RegisterNetEvent("az_mdt:client:callUpdated", function(callData)
-    callData = callData or {}
+    callData = enrichIncomingCall(callData or {})
+    local callId = tonumber(callData.id) or callData.id
+    if callId ~= nil then
+        local status = tostring(callData.status or ''):upper()
+        if status == 'CLEARED' or status == 'CLOSED' then
+            callsCache[callId] = nil
+            clearQuickRespondAttachState(callId)
+        else
+            callsCache[callId] = callData
+            if isPlayerAttachedToCachedCall(callId) then
+                clearQuickRespondAttachState(callId)
+            end
+        end
+    end
     dprint("CallUpdated id:", tostring(callData.id or "nil"))
 
     SendNUIMessage({
@@ -1035,13 +1409,25 @@ RegisterNetEvent("az_mdt:client:callUpdated", function(callData)
 end)
 
 RegisterNetEvent("az_mdt:client:newCallAlert", function(callData)
-    callData = callData or {}
+    callData = enrichIncomingCall(callData or {})
+    local callId = tonumber(callData.id) or callData.id
+    if callId ~= nil then
+        callsCache[callId] = callData
+        if not mdtOpen then
+            queueQuickRespondAlert(callData)
+        end
+    end
     dprint("NewCallAlert id:", tostring(callData.id or "nil"))
 
     SendNUIMessage({
         action = "newCallAlert",
         data   = jsonEncode(callData)
     })
+end)
+
+RegisterNetEvent("az_mdt:client:quickRespondAlert", function(callData)
+    if mdtOpen then return end
+    queueQuickRespondAlert(enrichIncomingCall(callData or {}))
 end)
 
 RegisterNetEvent("az_mdt:client:setWaypoint", function(coords)
@@ -1191,4 +1577,131 @@ RegisterNetEvent("az_mdt:client:dispatchStatusCheck", function(payload)
         action = "dispatchStatusCheck",
         data   = jsonEncode(payload)
     })
+end)
+
+
+CreateThread(function()
+    local interval = tonumber((Config.LiveMap or {}).updateIntervalMs) or 1750
+    if interval < 750 then interval = 750 end
+    while true do
+        Wait(interval)
+        local ped = PlayerPedId()
+        if ped and ped ~= 0 and DoesEntityExist(ped) then
+            local coords = GetEntityCoords(ped)
+            local vehicle = GetVehiclePedIsIn(ped, false)
+            local street, crossStreet, locationText = currentStreetLabelFromCoords({ x = coords.x, y = coords.y, z = coords.z })
+            TriggerServerEvent('az_mdt:UpdateUnitLocation', {
+                coords = { x = coords.x, y = coords.y, z = coords.z },
+                heading = GetEntityHeading(ped),
+                inVehicle = vehicle ~= 0,
+                vehicleClass = vehicle ~= 0 and GetVehicleClass(vehicle) or -1,
+                street = street,
+                crossStreet = crossStreet,
+                locationText = locationText
+            })
+        end
+    end
+end)
+
+
+local function isLocalUnitAttachedToCall(call, src)
+    if type(call) ~= 'table' or type(call.units) ~= 'table' then return false end
+    for _, unit in ipairs(call.units) do
+        local unitId = tonumber((unit and (unit.id or unit.source or unit.sourceId)))
+        if unitId and unitId == src then
+            return true
+        end
+    end
+    return false
+end
+
+local function findNearestAttachedCall(coords, src)
+    local bestCall, bestDist = nil, nil
+    for _, call in pairs(callsCache) do
+        local callCoords = type(call) == 'table' and type(call.coords) == 'table' and call.coords or nil
+        local status = tostring((call and call.status) or ''):upper()
+        if callCoords and callCoords.x and callCoords.y and status ~= 'CLEARED' and status ~= 'CLOSED' and isLocalUnitAttachedToCall(call, src) then
+            local dx = (coords.x - tonumber(callCoords.x))
+            local dy = (coords.y - tonumber(callCoords.y))
+            local dz = (coords.z - (tonumber(callCoords.z) or 0.0))
+            local dist = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+            if not bestDist or dist < bestDist then
+                bestCall, bestDist = call, dist
+            end
+        end
+    end
+    return bestCall, bestDist
+end
+
+CreateThread(function()
+    local cfg = Config.CallAutoArrival or {}
+    if cfg.enabled == false then return end
+    local interval = tonumber(cfg.recheckIntervalMs) or 1000
+    if interval < 500 then interval = 500 end
+    local arrivalDistance = tonumber(cfg.arrivalDistance) or 75.0
+    if arrivalDistance < 5.0 then arrivalDistance = 5.0 end
+    local repeatCooldownMs = tonumber(cfg.repeatCooldownMs) or 15000
+    if repeatCooldownMs < 2000 then repeatCooldownMs = 2000 end
+    local lastReportedByCall = {}
+
+    while true do
+        Wait(interval)
+        local ped = PlayerPedId()
+        if ped and ped ~= 0 and DoesEntityExist(ped) and not IsEntityDead(ped) then
+            local src = GetPlayerServerId(PlayerId())
+            local coords = GetEntityCoords(ped)
+            local nearestCall, nearestDist = findNearestAttachedCall(coords, src)
+            if nearestCall and nearestDist and nearestDist <= arrivalDistance then
+                local callId = tonumber(nearestCall.id) or nearestCall.id
+                local now = GetGameTimer()
+                local lastAt = tonumber(lastReportedByCall[callId]) or 0
+                if (now - lastAt) >= repeatCooldownMs then
+                    TriggerServerEvent('az_mdt:MarkUnitOnSceneForCall', callId, { distance = nearestDist })
+                    lastReportedByCall[callId] = now
+                end
+            end
+        else
+            Wait(250)
+        end
+    end
+end)
+
+
+CreateThread(function()
+    while true do
+        if pendingQuickRespond and not mdtOpen then
+            Wait(0)
+            if (tonumber(pendingQuickRespond.expiresAt) or 0) <= GetGameTimer() then
+                pendingQuickRespond = nil
+            else
+                DisableControlAction(0, 199, true)
+                if IsControlJustReleased(0, 38) then
+                    local quick = pendingQuickRespond
+                    local callId = tonumber(quick and quick.id) or 0
+                    local handledExternal = quickRespondAcceptExternal((quick and quick.raw) or quick or {})
+                    if callId > 0 then
+                        local quickCfg = Config.QuickRespond or {}
+                        if handledExternal then
+                            queueQuickRespondAttachRetries(callId, {
+                                externalAccepted = true,
+                                externalSource = (((quick and quick.raw) or quick or {}).externalSource or ((quick and quick.raw) or quick or {}).external_source or ((quick and quick.raw) or quick or {}).sourceResource or ((quick and quick.raw) or quick or {}).externalResource or ''),
+                                immediate = quickCfg.useImmediateAttachForExternalAccept == true
+                            })
+                        else
+                            queueQuickRespondAttachRetries(callId, { immediate = true })
+                        end
+                        TriggerEvent('az_mdt:client:notify', {
+                            type = 'success',
+                            title = 'Call Response',
+                            message = ('Responding to call #%s.'):format(tostring(callId))
+                        })
+                    end
+                    pendingQuickRespond = nil
+                    Wait(250)
+                end
+            end
+        else
+            Wait(250)
+        end
+    end
 end)

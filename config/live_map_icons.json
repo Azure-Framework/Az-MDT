@@ -1,0 +1,20 @@
+{
+  "police": {
+    "className": "",
+    "imageUrl": "img/pin-police.svg",
+    "label": "Police",
+    "emoji": "\ud83d\ude93"
+  },
+  "fire": {
+    "className": "",
+    "imageUrl": "img/pin-fire.svg",
+    "label": "Fire",
+    "emoji": "\ud83d\ude92"
+  },
+  "ems": {
+    "className": "",
+    "imageUrl": "img/pin-ems.svg",
+    "label": "EMS",
+    "emoji": "\ud83d\ude91"
+  }
+}

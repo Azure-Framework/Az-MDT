@@ -27,9 +27,9 @@ AddEventHandler("onClientResourceStart", function(res)
     if res ~= RESOURCE_NAME then return end
     TriggerServerEvent("az_mdt:RequestAuth")
 end)
--------------------------------------------------
--- NUI OPEN / CLOSE
--------------------------------------------------
+
+
+
 
 local function sendOpenMessages(ctx)
     ctx = ctx or {}
@@ -111,21 +111,21 @@ RegisterNUICallback("closeMDT", function(_, cb)
     cb({ ok = true })
 end)
 
--------------------------------------------------
--- SIMPLE NOTIFY
--------------------------------------------------
+
+
+
 
 RegisterNetEvent("az_mdt:client:notify", function(data)
     data = data or {}
     local msg   = data.message or "Notification"
     local _type = data.type or "info"
     dprint(("NOTIFY [%s] %s"):format(_type, msg))
-    -- hook your own notification system here if needed
+    
 end)
 
--------------------------------------------------
--- NUI CALLBACK REGISTRATION HELPER
--------------------------------------------------
+
+
+
 
 local function registerAliases(aliases, fn, opts)
     opts = opts or {}
@@ -141,17 +141,17 @@ local function registerAliases(aliases, fn, opts)
     end
 end
 
--------------------------------------------------
--- NUI → SERVER
--------------------------------------------------
 
--- Name search
+
+
+
+
 registerAliases({ "nameSearch", "NameSearch", "searchName", "SearchName" }, function(data, cb)
     dprint("NUI NameSearch:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:NameSearch", data or {})
     cb({ ok = true })
 end, { policeOnly = true })
--- Quick notes / flags / warrants
+
 registerAliases({ "CreateQuickNote", "createQuickNote" }, function(data, cb)
     dprint("NUI CreateQuickNote:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:CreateQuickNote", data or {})
@@ -170,21 +170,21 @@ registerAliases({ "CreateWarrant", "createWarrant" }, function(data, cb)
     cb({ ok = true })
 end)
 
--- Plate search
+
 registerAliases({ "plateSearch", "PlateSearch", "searchPlate" }, function(data, cb)
     dprint("NUI PlateSearch:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:PlateSearch", data or {})
     cb({ ok = true })
 end)
 
--- Weapon search
+
 registerAliases({ "weaponSearch", "WeaponSearch", "searchWeapon" }, function(data, cb)
     dprint("NUI WeaponSearch:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:WeaponSearch", data or {})
     cb({ ok = true })
 end)
 
--- BOLOS
+
 registerAliases({ "getBolos", "GetBolos", "bolosList" }, function(_, cb)
     dprint("NUI RequestBolos")
     TriggerServerEvent("az_mdt:RequestBolos")
@@ -197,7 +197,7 @@ registerAliases({ "createBolo", "CreateBolo" }, function(data, cb)
     cb({ ok = true })
 end)
 
--- REPORTS
+
 registerAliases({ "getReports", "GetReports", "reportsList" }, function(_, cb)
     dprint("NUI RequestReports")
     TriggerServerEvent("az_mdt:RequestReports")
@@ -210,21 +210,21 @@ registerAliases({ "createReport", "CreateReport" }, function(data, cb)
     cb({ ok = true })
 end)
 
--- EMPLOYEES
+
 registerAliases({ "viewEmployees", "ViewEmployees", "employeesList" }, function(_, cb)
     dprint("NUI ViewEmployees")
     TriggerServerEvent("az_mdt:ViewEmployees")
     cb({ ok = true })
 end)
 
--- UNITS
+
 registerAliases({ "getUnits", "GetUnits", "RequestUnits" }, function(_, cb)
     dprint("NUI RequestUnits")
     TriggerServerEvent("az_mdt:RequestUnits")
     cb({ ok = true })
 end)
 
--- STATUS / PANIC / HOSPITAL
+
 registerAliases({ "setUnitStatus", "SetUnitStatus" }, function(data, cb)
     dprint("NUI SetUnitStatus:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:SetUnitStatus", (data and data.status) or "AVAILABLE")
@@ -243,7 +243,7 @@ registerAliases({ "hospital", "Hospital" }, function(_, cb)
     cb({ ok = true })
 end)
 
--- 911 CALLS
+
 registerAliases({ "GetCalls", "getCalls" }, function(_, cb)
     dprint("NUI RequestCalls")
     TriggerServerEvent("az_mdt:RequestCalls")
@@ -262,15 +262,15 @@ registerAliases({ "CallWaypoint", "callWaypoint" }, function(data, cb)
     cb({ ok = true })
 end)
 
--- LIVE CHAT
--- LIVE CHAT
+
+
 registerAliases({ "LiveChatSend", "liveChatSend" }, function(data, cb)
     dprint("NUI LiveChatSend:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:LiveChatSend", data or {})
     cb({ ok = true })
 end)
 
--- Request chat history from server
+
 registerAliases({ "RequestChatHistory", "requestChatHistory", "GetChatHistory" }, function(_, cb)
     dprint("NUI RequestChatHistory")
     TriggerServerEvent("az_mdt:RequestChatHistory")
@@ -278,7 +278,7 @@ registerAliases({ "RequestChatHistory", "requestChatHistory", "GetChatHistory" }
 end)
 
 
--- ADMIN ACTIONS
+
 registerAliases({ "AdminDeleteBolo", "adminDeleteBolo" }, function(data, cb)
     dprint("NUI AdminDeleteBolo:", jsonEncode(data or {}))
     TriggerServerEvent("az_mdt:AdminDeleteBolo", (data and data.id) or 0)
@@ -303,11 +303,11 @@ registerAliases({ "AdminDeleteEmployee", "adminDeleteEmployee" }, function(data,
     cb({ ok = true })
 end)
 
--------------------------------------------------
--- SERVER → NUI
--------------------------------------------------
 
--- Name results
+
+
+
+
 RegisterNetEvent("az_mdt:client:nameResults", function(payload)
     payload = payload or {}
     local payloadJson = jsonEncode(payload)
@@ -329,7 +329,7 @@ RegisterNetEvent("az_mdt:client:nameResults", function(payload)
     })
 end)
 
--- Plate results
+
 RegisterNetEvent("az_mdt:client:plateResults", function(payload)
     payload = payload or {}
     dprint("PlateResults vehicles:", tostring(payload.vehicles and #payload.vehicles or 0),
@@ -341,7 +341,7 @@ RegisterNetEvent("az_mdt:client:plateResults", function(payload)
     })
 end)
 
--- Weapon results
+
 RegisterNetEvent("az_mdt:client:weaponResults", function(payload)
     payload = payload or {}
     dprint("WeaponResults (stub)")
@@ -352,7 +352,7 @@ RegisterNetEvent("az_mdt:client:weaponResults", function(payload)
     })
 end)
 
--- BOLOs
+
 RegisterNetEvent("az_mdt:client:boloList", function(list)
     list = list or {}
     dprint("BoloList count:", #list)
@@ -374,7 +374,7 @@ RegisterNetEvent("az_mdt:client:boloCreated", function(row)
     })
 end)
 
--- Panic broadcast
+
 RegisterNetEvent("az_mdt:client:panic", function(payload)
     payload = payload or {}
     dprint("Panic payload from server")
@@ -384,7 +384,7 @@ RegisterNetEvent("az_mdt:client:panic", function(payload)
     })
 end)
 
--- Reports
+
 RegisterNetEvent("az_mdt:client:reportList", function(list)
     list = list or {}
     dprint("ReportList count:", #list)
@@ -406,7 +406,7 @@ RegisterNetEvent("az_mdt:client:reportCreated", function(row)
     })
 end)
 
--- Employees
+
 RegisterNetEvent("az_mdt:client:employees", function(list)
     list = list or {}
     dprint("Employees count:", #list)
@@ -417,7 +417,7 @@ RegisterNetEvent("az_mdt:client:employees", function(list)
     })
 end)
 
--- Units snapshot
+
 RegisterNetEvent("az_mdt:client:unitsSnapshot", function(payload)
     payload = payload or {}
     unitsCache = payload.units or {}
@@ -428,7 +428,7 @@ RegisterNetEvent("az_mdt:client:unitsSnapshot", function(payload)
     })
 end)
 
--- 911 calls
+
 RegisterNetEvent("az_mdt:client:callsSnapshot", function(list)
     list = list or {}
     dprint("Calls snapshot count:", #list)
@@ -449,13 +449,13 @@ RegisterNetEvent("az_mdt:client:callUpdated", function(callData)
     })
 end)
 
--- Call waypoint
+
 RegisterNetEvent("az_mdt:client:setWaypoint", function(coords)
     if not coords or not coords.x or not coords.y then return end
     SetNewWaypoint(coords.x + 0.0, coords.y + 0.0)
 end)
 
--- Live chat
+
 RegisterNetEvent("az_mdt:client:liveChatHistory", function(list)
     list = list or {}
     SendNUIMessage({
@@ -472,7 +472,7 @@ RegisterNetEvent("az_mdt:client:liveChatMessage", function(msg)
     })
 end)
 
--- Status
+
 RegisterNetEvent("az_mdt:client:statusUpdate", function(status)
     SendNUIMessage({
         action = "statusUpdate",
@@ -480,7 +480,7 @@ RegisterNetEvent("az_mdt:client:statusUpdate", function(status)
     })
 end)
 
--- Warrants
+
 RegisterNetEvent("az_mdt:client:warrantsList", function(list)
     list = list or {}
     dprint("WarrantsList count:", #list)
@@ -491,7 +491,7 @@ RegisterNetEvent("az_mdt:client:warrantsList", function(list)
     })
 end)
 
--- IA / Action log
+
 RegisterNetEvent("az_mdt:client:actionLog", function(list)
     list = list or {}
     dprint("ActionLog count:", #list)
@@ -502,9 +502,9 @@ RegisterNetEvent("az_mdt:client:actionLog", function(list)
     })
 end)
 
--------------------------------------------------
--- /911 CLIENT COMMAND
--------------------------------------------------
+
+
+
 
 RegisterCommand("911", function(_, args)
     local message = table.concat(args, " ")

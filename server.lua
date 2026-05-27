@@ -1,3 +1,4 @@
+
 local RESOURCE_NAME = GetCurrentResourceName()
 local fw            = exports['Az-Framework']
 
@@ -5,7 +6,9 @@ Config = Config or {}
 if Config.Debug == nil then Config.Debug = true end
 
 
-Config.PoliceJobs = Config.PoliceJobs or { "police" } -- add more: { "police","sheriff","state" }
+
+
+Config.PoliceJobs = Config.PoliceJobs or { "police" } 
 
 local function getPlayerJobLower(src)
     local ok, job = pcall(function()
@@ -43,7 +46,7 @@ local function requirePolice(src, actionName)
     return true
 end
 
--- Send an event ONLY to police players
+
 local function TriggerPoliceEvent(eventName, ...)
     for _, sid in ipairs(GetPlayers()) do
         local src = tonumber(sid)
@@ -53,12 +56,18 @@ local function TriggerPoliceEvent(eventName, ...)
     end
 end
 
+
+
+
 local function dprint(...)
     if not Config.Debug then return end
     local args = { ... }
     for i = 1, #args do args[i] = tostring(args[i]) end
     print(("^3[%s S]^7 %s"):format(RESOURCE_NAME, table.concat(args, " ")))
 end
+
+
+
 
 local DB = {}
 
@@ -115,6 +124,9 @@ function DB.execute(query, params, cb)
     end
 end
 
+
+
+
 local function trim(s)
     if not s then return "" end
     return (s:gsub("^%s+", ""):gsub("%s+$", ""))
@@ -143,6 +155,9 @@ local function buildPlaceholders(count)
     for i = 1, count do t[i] = "?" end
     return table.concat(t, ",")
 end
+
+
+
 
 local function getDiscordId(src)
     local id = fw:getDiscordID(src)
@@ -230,6 +245,8 @@ local function loadCharacterWithMugshot(discordId, charId, cb)
 end
 
 
+
+
 local function logAction(src, action, target, meta)
     local officerName    = GetPlayerName(src) or ("src " .. tostring(src))
     local officerDiscord = getDiscordId(src) or ""
@@ -265,10 +282,13 @@ local function updateLastSeen(charid)
     ]], { charid })
 end
 
-local Units    = {}  -- [src] = { id, name, department, callsign, status }
-local UnitMeta = {}  -- [src] = officer context
 
-local Calls      = {}  -- [id] = call table
+
+
+local Units    = {}  
+local UnitMeta = {}  
+
+local Calls      = {}  
 local NextCallId = 1
 
 local function broadcastUnits()
@@ -311,10 +331,16 @@ local function broadcastCalls()
     TriggerPoliceEvent("az_mdt:client:callsSnapshot", snapshotCalls())
 end
 
+
+
+
 RegisterNetEvent("az_mdt:RequestAuth", function()
     local src = source
     TriggerClientEvent("az_mdt:client:setAuthorized", src, isPolice(src))
 end)
+
+
+
 
 RegisterCommand("mdt", function(src)
     if src == 0 then
@@ -357,6 +383,8 @@ RegisterCommand("mdt", function(src)
         broadcastCalls()
     end)
 end, false)
+
+
 
 
 RegisterNetEvent("az_mdt:NameSearch", function(data)
@@ -469,6 +497,9 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
     end)
 end)
 
+
+
+
 RegisterNetEvent("az_mdt:UpdateLastSeen", function(charid)
     local src = source
     if not charid then
@@ -478,6 +509,9 @@ RegisterNetEvent("az_mdt:UpdateLastSeen", function(charid)
     end
     updateLastSeen(charid)
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:PlateSearch", function(data)
     local src = source
@@ -549,6 +583,9 @@ RegisterNetEvent("az_mdt:PlateSearch", function(data)
     end)
 end)
 
+
+
+
 RegisterNetEvent("az_mdt:WeaponSearch", function(data)
     local src = source
     if not requirePolice(src, "WeaponSearch") then return end
@@ -573,6 +610,9 @@ RegisterNetEvent("az_mdt:WeaponSearch", function(data)
         records = {}
     })
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:RequestBolos", function()
     local src = source
@@ -622,7 +662,7 @@ RegisterNetEvent("az_mdt:CreateBolo", function(payload)
             row.body = jsonDecode(row.data) or {}
             row.data = nil
 
-            -- POLICE ONLY BROADCAST
+            
             TriggerPoliceEvent("az_mdt:client:boloCreated", row)
 
             logAction(src, "bolo_create", ("BOLO #" .. tostring(insertId)), {
@@ -632,6 +672,9 @@ RegisterNetEvent("az_mdt:CreateBolo", function(payload)
         end)
     end)
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:RequestReports", function()
     local src = source
@@ -687,7 +730,7 @@ RegisterNetEvent("az_mdt:CreateReport", function(payload)
             row.body = jsonDecode(row.data) or {}
             row.data = nil
 
-            -- POLICE ONLY BROADCAST
+            
             TriggerPoliceEvent("az_mdt:client:reportCreated", row)
 
             logAction(src, "report_create", ("Report #" .. tostring(insertId)), {
@@ -712,6 +755,9 @@ RegisterNetEvent("az_mdt:CreateReport", function(payload)
         })
     end
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:CreateQuickNote", function(payload)
     local src = source
@@ -752,6 +798,9 @@ RegisterNetEvent("az_mdt:CreateQuickNote", function(payload)
         })
     end)
 end)
+
+
+
 
 local VALID_FLAGS = {
     officer_safety = true,
@@ -809,6 +858,9 @@ RegisterNetEvent("az_mdt:SetIdentityFlags", function(payload)
     end)
 end)
 
+
+
+
 RegisterNetEvent("az_mdt:CreateWarrant", function(payload)
     local src = source
     if not requirePolice(src, "CreateWarrant") then return end
@@ -865,6 +917,9 @@ RegisterNetEvent("az_mdt:RequestWarrants", function()
     end)
 end)
 
+
+
+
 RegisterNetEvent("az_mdt:RequestActionLog", function()
     local src = source
     if not requirePolice(src, "RequestActionLog") then return end
@@ -882,6 +937,9 @@ RegisterNetEvent("az_mdt:RequestActionLog", function()
         TriggerClientEvent("az_mdt:client:actionLog", src, rows)
     end)
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:ViewEmployees", function()
     local src = source
@@ -914,6 +972,9 @@ RegisterNetEvent("az_mdt:ViewEmployees", function()
         end)
     end)
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:SetUnitStatus", function(status)
     local src = source
@@ -978,6 +1039,10 @@ AddEventHandler("playerDropped", function()
     broadcastUnits()
 end)
 
+
+
+
+
 RegisterNetEvent("az_mdt:Create911", function(payload)
     local src = source
     payload = payload or {}
@@ -1012,7 +1077,7 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
         message  = message
     })
 
-    -- POLICE ONLY BROADCAST (stops civ TTS/dispatch)
+    
     TriggerPoliceEvent("az_mdt:client:callUpdated", call)
 end)
 
@@ -1050,7 +1115,7 @@ RegisterNetEvent("az_mdt:AttachToCall", function(callId)
     call.status = "ENROUTE"
     dprint(("AttachToCall #%d by %s"):format(callId, ctx.name or src))
 
-    -- POLICE ONLY BROADCAST
+    
     TriggerPoliceEvent("az_mdt:client:callUpdated", call)
 end)
 
@@ -1063,6 +1128,9 @@ RegisterNetEvent("az_mdt:SetCallWaypoint", function(callId)
 
     TriggerClientEvent("az_mdt:client:setWaypoint", src, call.coords)
 end)
+
+
+
 
 local ChatHistory = {}
 local CHAT_MAX    = 100
@@ -1146,7 +1214,7 @@ RegisterNetEvent("az_mdt:LiveChatSend", function(data)
 
     pushChatMessage(payload, false)
 
-    -- POLICE ONLY BROADCAST
+    
     TriggerPoliceEvent("az_mdt:client:liveChatMessage", payload)
 end)
 
@@ -1155,6 +1223,9 @@ RegisterNetEvent("az_mdt:RequestChatHistory", function()
     if not requirePolice(src, "RequestChatHistory") then return end
     TriggerClientEvent("az_mdt:client:liveChatHistory", src, ChatHistory)
 end)
+
+
+
 
 RegisterNetEvent("az_mdt:AdminDeleteBolo", function(id)
     local src = source
@@ -1252,6 +1323,9 @@ RegisterNetEvent("az_mdt:AdminDeleteEmployee", function(payload)
         end)
     end)
 end)
+
+
+
 
 AddEventHandler("onResourceStart", function(res)
     if res ~= RESOURCE_NAME then return end

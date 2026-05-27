@@ -2,7 +2,7 @@ Config = Config or {}
 
 Config.Debug = true
 
--- Command / keybind
+
 Config.CommandName = "mdt"
 Config.CivCommandName = "civmdt"
 Config.DispatchCommandName = "dispatchmdt"
@@ -11,8 +11,8 @@ Config.VehicleRegisterCommandName = "mdtregistervehicle"
 Config.VehicleRegisterCommandAliases = { "mdtregvehicle", "regvehicle", "regcar" }
 Config.AllowAutoCreateCivilianOnVehicleCommand = true
 
--- Standalone mode (no framework dependency)
-Config.Standalone = true
+
+Config.Standalone = false
 Config.DefaultDepartment = "police"
 Config.DefaultOfficerGrade = 0
 Config.DefaultCallsignPrefix = "U"
@@ -29,25 +29,29 @@ Config.CharacterStateKeys = {
 }
 
 Config.Departments = {
-    { id = "police",  label = "Police" },
-    { id = "sheriff", label = "Sheriff" },
-    { id = "state",   label = "State" }
+    { id = "police",   label = "Police" },
+    { id = "sheriff",  label = "Sheriff" },
+    { id = "state",    label = "State" },
+    { id = "fire",     label = "Fire" },
+    { id = "ems",      label = "EMS" },
+    { id = "dispatch", label = "Dispatch" },
+    { id = "civilian", label = "Civilian" }
 }
 
 Config.TTS = {
-    -- all_onduty: every on-duty LEO hears new-call TTS
-    -- attached_only: only speak the call once the officer opens/attaches to that call room
-    -- none: disable the category entirely
+    
+    
+    
     callMode = "all_onduty",
     panicMode = "all_onduty",
     boloMode = "all_onduty"
 }
 
--- ACE permissions used by the resource
--- Add these in your server.cfg, for example:
--- add_ace group.leo az_mdt.open allow
--- add_ace group.command az_mdt.admin allow
--- add_ace group.supervisor az_mdt.supervisor allow
+
+
+
+
+
 Config.ACEPermissions = {
     open = "az_mdt.open",
     admin = "az_mdt.admin",
@@ -58,7 +62,7 @@ Config.ACEPermissions = {
     leochat = "az_mdt.leochat"
 }
 
--- Backwards-compatible alias if you want to reference the name exactly as ACEPERMISSIONS
+
 Config.ACEPERMISSIONS = Config.ACEPermissions
 Config.PreferEmployeeAccessOverAce = true
 
@@ -82,6 +86,48 @@ Config.Postals = {
     file = "config/postals.json",
     includeInCallLocation = false,
     speakInTTS = true
+}
+
+Config.CallAutoArrival = {
+    enabled = true,
+    arrivalDistance = 75.0,
+    recheckIntervalMs = 1000,
+    repeatCooldownMs = 15000
+}
+
+Config.QuickRespond = {
+    windowMs = 45000,
+    alertDurationMs = 20000,
+    attachRetryMs = { 150, 900, 2200, 5000, 8000 },
+    externalAttachRetryMs = { 500, 1800 },
+    externalAttachRetryServiceMs = { 500, 1800, 4200 },
+    useImmediateAttachForExternalAccept = false
+}
+
+Config.LiveMap = {
+    enabled = true,
+    updateIntervalMs = 1750,
+    showPostalLabels = false,
+    iconStoreFile = 'config/live_map_icons.json',
+    mapImage = 'img/gta5-roadmap-2048.jpg',
+    stageSize = 2048,
+    bounds = {
+        minX = -4200.0,
+        maxX =  4500.0,
+        minY = -4500.0,
+        maxY =  8500.0
+    },
+    mapRect = {
+        left = 289,
+        top = 35,
+        right = 1730,
+        bottom = 2046
+    },
+    defaultIcons = {
+        police = { className = '', imageUrl = 'img/pin-police.svg', label = 'Police', emoji = '🚓' },
+        fire   = { className = '', imageUrl = 'img/pin-fire.svg',   label = 'Fire',   emoji = '🚒' },
+        ems    = { className = '', imageUrl = 'img/pin-ems.svg',    label = 'EMS',    emoji = '🚑' }
+    }
 }
 
 Config.CivilianDefaults = {
@@ -115,7 +161,7 @@ Config.Web = {
     }
 }
 
--- Standalone MySQL tables used by this MDT
+
 Config.Tables = {
     citizens  = "az_mdt_citizens",
     vehicles  = "az_mdt_vehicles",
@@ -126,6 +172,17 @@ Config.Tables = {
     reports   = "az_mdt_reports",
     employees = "az_mdt_employees"
 }
+
+
+Config.UseAzAmbulance = true
+Config.AzAmbulance = Config.AzAmbulance or {}
+Config.AzAmbulance.ResourceNames = Config.AzAmbulance.ResourceNames or { 'Az-Ambulance', 'az_ambulance', 'az-ambulance' }
+Config.AzAmbulance.JobNames = Config.AzAmbulance.JobNames or { 'ambulance', 'ems', 'doctor', 'paramedic' }
+
+Config.UseAzFire = true
+Config.AzFire = Config.AzFire or {}
+Config.AzFire.ResourceNames = Config.AzFire.ResourceNames or { 'Az-Fire', 'az_fire', 'az-fire' }
+Config.AzFire.JobNames = Config.AzFire.JobNames or { 'fire', 'firefighter', 'safd' }
 
 
 Config.UseAz5PD = true

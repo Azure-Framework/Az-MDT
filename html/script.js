@@ -23,6 +23,7 @@ const MDT = {
         chat: [],
         recordTarget: null,
         seenCalls: {},
+        alertedCalls: {},
         isAdmin: false,
         isSupervisor: false,
         canManageDispatch: false,
@@ -34,6 +35,7 @@ const MDT = {
         leoChat: [],
         callRooms: {},
         activeCallRoom: null,
+        pendingCallRoomRequest: null,
         callHistory: [],
         myCivilians: [],
         selectedCivilianId: null,
@@ -46,7 +48,16 @@ const MDT = {
         employeeAccessState: { open: {}, drafts: {}, lastSavedAt: 0 },
         pendingExternalSearch: null,
         replayingExternalSearch: false,
-        externalSearchRunState: { key: '', at: 0, completedKey: '', completedAt: 0 }
+        externalSearchRunState: { key: '', at: 0, completedKey: '', completedAt: 0 },
+        liveMap: {
+            config: { enabled: true, updateIntervalMs: 1750, showPostalLabels: false, bounds: { minX: -4200, maxX: 4500, minY: -4500, maxY: 8500 } },
+            icons: {},
+            postals: [],
+            filter: 'all',
+            pendingUploads: {},
+            view: { scale: 1, x: 0, y: 0, ready: false, hasFitted: false },
+            dragging: { active: false, startX: 0, startY: 0, baseX: 0, baseY: 0 }
+        }
     },
     els: {}
 };
@@ -144,6 +155,20 @@ function setInputValue(el, value) {
     if (el.value !== next) el.value = next;
     dispatchInputSync(el);
     return true;
+}
+
+function normalizeNameToken(value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isPlaceholderNameValue(value) {
+    const v = normalizeNameToken(value);
+    return v === '' || v === 'unknown' || v === 'unknown unknown' || v === 'n/a' || v === 'na' || v === 'none';
+}
+
+function shouldProtectActiveNameInputs() {
+    const active = document.activeElement;
+    return active === getNameFirstInput() || active === getNameLastInput();
 }
 
 function getNameFirstInput() {
@@ -308,7 +333,12 @@ function replayPendingExternalSearch(runSearch = false) {
             setTimeout(applyPlate, 220);
         }
 
-        if (finalFirst || finalLast) {
+        const hasUsefulName = (finalFirst || finalLast)
+            && !isPlaceholderNameValue(finalFirst)
+            && !isPlaceholderNameValue(finalLast)
+            && !(normalizeNameToken(`${finalFirst} ${finalLast}`) === 'unknown unknown');
+
+        if (hasUsefulName) {
             MDT.state.lastQueries.nameFirst = finalFirst;
             MDT.state.lastQueries.nameLast = finalLast;
             MDT.state.lastQueries.nameMeta = cloneSearchMeta({
@@ -320,6 +350,7 @@ function replayPendingExternalSearch(runSearch = false) {
                 name: rawName || `${finalFirst} ${finalLast}`.trim()
             });
             const applyName = () => {
+                if (shouldProtectActiveNameInputs()) return;
                 setInputValue(getNameFirstInput(), MDT.state.lastQueries.nameFirst);
                 setInputValue(getNameLastInput(), MDT.state.lastQueries.nameLast);
             };
@@ -487,7 +518,14 @@ function rowLikelyMatchesCurrentViewer(row) {
 }
 
 function queueLiveRefresh(ms = 200) {
-    window.setTimeout(() => refreshActiveView(), Math.max(0, Number(ms) || 0));
+    const delay = Math.max(0, Number(ms) || 0);
+    if (MDT.state.liveRefreshTimer) {
+        window.clearTimeout(MDT.state.liveRefreshTimer);
+    }
+    MDT.state.liveRefreshTimer = window.setTimeout(() => {
+        MDT.state.liveRefreshTimer = null;
+        refreshActiveView();
+    }, delay);
 }
 
 function canUseDispatchRole() {
@@ -500,11 +538,11 @@ function isLeoLikeRole() {
 }
 
 const ROLE_PAGE_DEFAULTS = {
-    admin: { dashboard:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:true, iaLogs:true },
-    dispatch: { dashboard:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:false, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false },
-    supervisor: { dashboard:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false },
-    civ: { dashboard:true, nameSearch:false, plateSearch:false, weaponSearch:false, bolos:false, reports:true, dutyChat:false, callsHub:false, simTools:false, civCenter:true, dmv:true, warrants:false, employees:false, themes:false, iaLogs:false },
-    leo: { dashboard:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false }
+    admin: { dashboard:true, liveMap:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:true, iaLogs:true },
+    dispatch: { dashboard:true, liveMap:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:false, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false },
+    supervisor: { dashboard:true, liveMap:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false },
+    civ: { dashboard:true, liveMap:false, nameSearch:false, plateSearch:false, weaponSearch:false, bolos:false, reports:true, dutyChat:false, callsHub:false, simTools:false, civCenter:true, dmv:true, warrants:false, employees:false, themes:false, iaLogs:false },
+    leo: { dashboard:true, liveMap:true, nameSearch:true, plateSearch:true, weaponSearch:true, bolos:true, reports:true, dutyChat:true, callsHub:true, simTools:true, civCenter:true, dmv:true, warrants:true, employees:true, themes:false, iaLogs:false }
 };
 
 const ROLE_ACTION_DEFAULTS = {
@@ -1102,15 +1140,72 @@ function initAudio() {
     }
 }
 
+function playFallbackBeep(name) {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        MDT.state.audioCtx = MDT.state.audioCtx || new AudioCtx();
+        const ctx = MDT.state.audioCtx;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const now = ctx.currentTime || 0;
+        const profile = name === 'panic'
+            ? { freq: 880, gain: 0.06, len: 0.22 }
+            : name === 'bolo'
+                ? { freq: 660, gain: 0.045, len: 0.16 }
+                : { freq: 740, gain: 0.05, len: 0.18 };
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(profile.freq, now);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(profile.gain, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + profile.len);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + profile.len + 0.02);
+    } catch (e) {
+        console.warn('[az_mdt] fallback beep failed', name, e);
+    }
+}
+
 function playSound(name) {
     const snd = MDT_AUDIO[name];
-    if (!snd) return;
+    if (!snd) {
+        playFallbackBeep(name);
+        return;
+    }
     try {
         snd.currentTime = 0;
-        snd.play().catch(() => {});
+        const playPromise = snd.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => playFallbackBeep(name));
+        }
     } catch (e) {
         console.warn('[az_mdt] playSound failed', name, e);
+        playFallbackBeep(name);
     }
+}
+
+
+function stripDispatchTokenPrefix(value) {
+    let text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    text = text.replace(/^(?:\[[^\]]+\]\s*)+/, '');
+    text = text.replace(/^(?:\([^\)]+\)\s*)+/, '');
+    text = text.replace(/^(?:\{[^\}]+\}\s*)+/, '');
+    return text.trim();
+}
+
+function prettifyServiceLabel(value) {
+    const raw = String(value == null ? '' : value).trim();
+    const normalized = raw.toLowerCase();
+    if (!normalized) return 'Call';
+    if (normalized === 'ems') return 'EMS';
+    if (normalized === 'leo' || normalized === '5pd') return 'Police';
+    if (normalized === 'fire') return 'Fire';
+    if (normalized === 'parkranger' || normalized === 'park_ranger' || normalized === 'park-ranger' || normalized === 'ranger' || normalized === 'parkrangers') return 'Park Ranger';
+    if (normalized === '911') return '911';
+    return raw.replace(/[_-]+/g, ' ').replace(/\w/g, c => c.toUpperCase());
 }
 
 function speak(text) {
@@ -1137,6 +1232,31 @@ function speak(text) {
     } catch (e) {
         console.warn('[az_mdt] TTS failed', e);
     }
+}
+
+
+function buildCallSpeechText(call) {
+    call = call || {};
+    const service = prettifyServiceLabel(call.service || call.type || 'Call');
+    const callId = call.id != null ? String(call.id) : '';
+    const status = String(call.status || 'ACTIVE').trim();
+    const caller = String(call.caller || '').trim();
+    const units = Array.isArray(call.units)
+        ? call.units.map(u => String((u && (u.callsign || u.unit || u.name)) || '').trim()).filter(Boolean).join(', ')
+        : String(call.unitsLabel || '').trim();
+    const time = String(call.created_at || call.createdAt || '').trim();
+    const location = String(call.location || call.street || call.notificationMessage || '').trim();
+    const details = stripDispatchTokenPrefix(String(call.message || call.details || call.reason || '').trim());
+    const parts = [];
+    parts.push(`${service}${callId ? ` call ${callId}` : ''}.`);
+    if (status) parts.push(`Status ${status}.`);
+    if (caller) parts.push(`Caller ${caller}.`);
+    if (units) parts.push(`Units ${units}.`);
+    if (time) parts.push(`Time ${time}.`);
+    if (location) parts.push(`Location ${location}.`);
+    if (details) parts.push(details.endsWith('.') ? details : `${details}.`);
+    parts.push('Press E to respond.');
+    return parts.join(' ');
 }
 
 function safeParse(input, label) {
@@ -1338,6 +1458,19 @@ async function browserHandleAction(name, data) {
                 const result = await browserFetchJson('api/theme');
                 dispatchIncoming('themeSettings', result.theme || {});
                 return result.theme || {};
+            }
+            case 'GetLiveMapIcons': {
+                const result = await browserFetchJson('api/live-map-icons');
+                dispatchIncoming('liveMapIcons', result.liveMap || {});
+                return result.liveMap || {};
+            }
+            case 'SaveLiveMapIcons': {
+                const result = await browserFetchJson('api/action/save-live-map-icons', { icons: JSON.stringify(payload || {}) });
+                dispatchIncoming('liveMapIcons', result.liveMap || {});
+                if (result && result.message) {
+                    pushNotification({ type: 'success', title: 'LiveMap', message: result.message });
+                }
+                return result.liveMap || {};
             }
             case 'ViewEmployees': {
                 const rows = await browserFetchJson('api/employees');
@@ -1560,6 +1693,10 @@ function nuiPost(name, data) {
         return browserHandleAction(name, data);
     }
 
+    if (shouldSkipNuiPost(name, data)) {
+        return Promise.resolve({ skipped: true, name });
+    }
+
     return fetch(`https://${GetParentResourceName()}/${name}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -1568,6 +1705,53 @@ function nuiPost(name, data) {
         console.error('[az_mdt] NUI post failed', name, err);
         throw err;
     });
+}
+
+const NUI_POST_GUARD_WINDOWS = {
+    PlateSearch: 900,
+    NameSearch: 900,
+    WeaponSearch: 900,
+    GetBolos: 1500,
+    GetReports: 1500,
+    GetUnits: 500,
+    GetCalls: 500,
+    GetWarrants: 1500,
+    RequestLeoChat: 1000,
+    SearchCallHistory: 900,
+    SearchCivilianRegistry: 600,
+    SearchDMV: 600
+};
+
+function stableCloneForGuard(value) {
+    if (Array.isArray(value)) {
+        return value.map(stableCloneForGuard);
+    }
+    if (value && typeof value === 'object') {
+        const out = {};
+        Object.keys(value).sort().forEach((key) => {
+            out[key] = stableCloneForGuard(value[key]);
+        });
+        return out;
+    }
+    return value;
+}
+
+function shouldSkipNuiPost(name, data) {
+    if (!MDT_RUNTIME.isNui) return false;
+    const windowMs = Number(NUI_POST_GUARD_WINDOWS[name] || 0);
+    if (!windowMs) return false;
+
+    const state = MDT.state.nuiPostGuard || (MDT.state.nuiPostGuard = {});
+    const key = `${name}:${JSON.stringify(stableCloneForGuard(data || {}))}`;
+    const now = Date.now();
+    const lastAt = Number(state[key] || 0);
+
+    if (lastAt && (now - lastAt) < windowMs) {
+        return true;
+    }
+
+    state[key] = now;
+    return false;
 }
 
 function showRoot() {
@@ -1621,13 +1805,15 @@ function restoreActivePage(role) {
     return fallback;
 }
 
-function setActivePage(id) {
+function setActivePage(id, options = {}) {
     const role = MDT.state.role || 'leo';
+    const previousPage = MDT.state.activePage || '';
     if (!pageElementExists(id) || !isPageAllowedForRole(id, role)) {
         id = defaultPageForRole(role);
     }
     MDT.state.activePage = id;
     rememberActivePage(id, role);
+    const changedPage = previousPage !== id;
 
     const pages = document.querySelectorAll('[data-mdt-page], .mdt-page');
     pages.forEach(page => {
@@ -1661,6 +1847,10 @@ function setActivePage(id) {
     if (!MDT.state.replayingExternalSearch && pending && pending.page === id) {
         setTimeout(() => replayPendingExternalSearch(false), 0);
         setTimeout(() => replayPendingExternalSearch(false), 90);
+    }
+
+    if (!MDT_RUNTIME.isBrowser && changedPage && options.refresh !== false) {
+        queueLiveRefresh(0);
     }
 }
 
@@ -1733,6 +1923,33 @@ function pushNotification(data) {
 
 function pushNotify(data) {
     return pushNotification(data);
+}
+
+function emitCallBanner(call) {
+    if (!call || !call.id) return;
+    if (MDT.state.alertedCalls[call.id]) return;
+    MDT.state.alertedCalls[call.id] = true;
+
+    const loc = String(call.location || call.street || call.notificationMessage || 'unknown location').trim();
+    const postal = call.postal ? ` • Postal ${call.postal}` : '';
+    const serviceLabel = prettifyServiceLabel(call.service || call.type || '911');
+    const title = call.notificationTitle || call.title || `New ${serviceLabel} Call #${call.id}`;
+    const reason = stripDispatchTokenPrefix(String(call.message || call.details || call.reason || '').trim());
+    const closedHint = MDT.root && MDT.root.classList.contains('hidden') ? ' • Press E to respond' : '';
+    const caller = String(call.caller || '').trim();
+    const units = Array.isArray(call.units)
+        ? call.units.map(u => String((u && (u.callsign || u.unit || u.name)) || '').trim()).filter(Boolean).join(', ')
+        : String(call.unitsLabel || '').trim();
+    const time = String(call.created_at || call.createdAt || '').trim();
+    const meta = [caller ? `Caller: ${caller}` : '', units ? `Units: ${units}` : '', time].filter(Boolean).join(' • ');
+    const baseMessage = [loc + postal, reason, meta, closedHint ? closedHint.replace(/^\s*•\s*/, '') : ''].filter(Boolean).join(' • ');
+    const message = stripDispatchTokenPrefix(String(call.notificationMessage || '').trim()) || baseMessage;
+    pushNotify({
+        type: call.notificationType || 'call',
+        title,
+        message,
+        duration: Number(call.notificationDuration) || 12000
+    });
 }
 
 const WEAPON_SERIAL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -2546,7 +2763,7 @@ function applyRoleDefaultsToEmployeeEditor(editor, role) {
 function employeeAccessEditorHtml(row) {
     const perms = normalizedEmployeePerms(row);
     const pageEntries = [
-        ['dashboard','Dashboard'],['nameSearch','Name Search'],['plateSearch','Plate Search'],['weaponSearch','Weapon Search'],
+        ['dashboard','Dashboard'],['liveMap','Live Map'],['nameSearch','Name Search'],['plateSearch','Plate Search'],['weaponSearch','Weapon Search'],
         ['bolos','BOLOs'],['reports','Reports'],['dutyChat','LEO Chat'],['callsHub','Calls Hub'],['civCenter','Civilian Center'],
         ['dmv','DMV'],['warrants','Warrants'],['employees','Employees'],['themes','Theme Studio'],['iaLogs','IA Logs']
     ];
@@ -2696,6 +2913,7 @@ function renderUnits(list) {
 
     if (!list || list.length === 0) {
         container.innerHTML = '<div class="mdt-empty">No active units.</div>';
+        renderLiveMap();
         return;
     }
 
@@ -2713,7 +2931,7 @@ function renderUnits(list) {
     list.forEach(u => {
         const div = document.createElement('div');
         div.className = 'mdt-row';
-        const canManageThis = canDispatchManage && String(u.id || '') !== String((MDT.state.officer || {}).id || '');
+        const canManageThis = canDispatchManage && String(u.id || '') !== getCurrentOfficerUnitId();
         const currentStatus = (u.status || 'AVAILABLE').toUpperCase();
         const actions = canManageThis ? `
             <div class="mdt-row-actions" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
@@ -2737,6 +2955,547 @@ function renderUnits(list) {
         `;
         container.appendChild(div);
     });
+
+    renderLiveMap();
+}
+
+
+function getLiveMapDefaults() {
+    return {
+        enabled: true,
+        updateIntervalMs: 1750,
+        showPostalLabels: false,
+        allowCustomIcons: true,
+        mapImage: 'img/gta5-roadmap-2048.jpg',
+        stageSize: 2048,
+        bounds: { minX: -4200, maxX: 4500, minY: -4500, maxY: 8500 },
+        mapRect: { left: 289, top: 35, right: 1730, bottom: 2046 },
+        icons: {
+            police: { className: 'fa-solid fa-car-side', imageUrl: '', label: 'Police', emoji: '🚓' },
+            fire: { className: 'fa-solid fa-fire-truck', imageUrl: '', label: 'Fire', emoji: '🚒' },
+            ems: { className: 'fa-solid fa-truck-medical', imageUrl: '', label: 'EMS', emoji: '🚑' }
+        }
+    };
+}
+
+function normalizeLiveMapService(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (['fire', 'firefighter', 'safd'].includes(v)) return 'fire';
+    if (['ems', 'ambulance', 'paramedic', 'doctor', 'medical'].includes(v)) return 'ems';
+    return 'police';
+}
+
+function getLiveMapState() {
+    MDT.state.liveMap = MDT.state.liveMap || { config: {}, icons: {}, postals: [], filter: 'all', pendingUploads: {}, selectedUnitId: '', view: { scale: 1, x: 0, y: 0, ready: false, hasFitted: false }, dragging: { active: false, startX: 0, startY: 0, baseX: 0, baseY: 0 } };
+    return MDT.state.liveMap;
+}
+
+function getLiveMapConfig() {
+    const state = getLiveMapState();
+    const defaults = getLiveMapDefaults();
+    return {
+        ...defaults,
+        ...(state.config || {}),
+        stageSize: Math.max(512, Number((state.config || {}).stageSize || defaults.stageSize) || defaults.stageSize),
+        mapImage: String((state.config || {}).mapImage || defaults.mapImage || '').trim(),
+        bounds: { ...(defaults.bounds || {}), ...(((state.config || {}).bounds) || {}) },
+        mapRect: { ...(defaults.mapRect || {}), ...(((state.config || {}).mapRect) || {}) },
+        icons: { ...(defaults.icons || {}), ...(state.icons || {}), ...((((state.config || {}).icons) || {})) }
+    };
+}
+
+function applyLiveMapState(payload) {
+    const state = getLiveMapState();
+    const incoming = (payload && typeof payload === 'object') ? payload : {};
+    const defaults = getLiveMapDefaults();
+    state.config = {
+        enabled: incoming.enabled !== false,
+        updateIntervalMs: Number(incoming.updateIntervalMs || defaults.updateIntervalMs) || defaults.updateIntervalMs,
+        showPostalLabels: incoming.showPostalLabels === true,
+        allowCustomIcons: incoming.allowCustomIcons !== false,
+        mapImage: String(incoming.mapImage || defaults.mapImage || '').trim(),
+        stageSize: Math.max(512, Number(incoming.stageSize || defaults.stageSize) || defaults.stageSize),
+        bounds: { ...(defaults.bounds || {}), ...((incoming.bounds && typeof incoming.bounds === 'object') ? incoming.bounds : {}) },
+        mapRect: { ...(defaults.mapRect || {}), ...((incoming.mapRect && typeof incoming.mapRect === 'object') ? incoming.mapRect : {}) }
+    };
+    state.icons = { ...(defaults.icons || {}), ...((incoming.icons && typeof incoming.icons === 'object') ? incoming.icons : {}) };
+    if (!Array.isArray(state.postals)) state.postals = [];
+    renderLiveMapIconEditors();
+    renderLiveMap();
+}
+
+function getLiveMapBounds() {
+    const cfg = getLiveMapConfig();
+    const bounds = cfg.bounds || {};
+    return {
+        minX: Number(bounds.minX ?? -4200),
+        maxX: Number(bounds.maxX ?? 4500),
+        minY: Number(bounds.minY ?? -4500),
+        maxY: Number(bounds.maxY ?? 8500)
+    };
+}
+
+
+function getLiveMapRect() {
+    const cfg = getLiveMapConfig();
+    const stageSize = Math.max(512, Number(cfg.stageSize || 2048) || 2048);
+    const rect = (cfg.mapRect && typeof cfg.mapRect === 'object') ? cfg.mapRect : {};
+    const left = Math.max(0, Math.min(stageSize - 1, Number(rect.left ?? 289) || 289));
+    const top = Math.max(0, Math.min(stageSize - 1, Number(rect.top ?? 35) || 35));
+    const right = Math.max(left + 1, Math.min(stageSize, Number(rect.right ?? 1730) || 1730));
+    const bottom = Math.max(top + 1, Math.min(stageSize, Number(rect.bottom ?? 2046) || 2046));
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function worldToLiveMapPoint(coords) {
+    const bounds = getLiveMapBounds();
+    const rect = getLiveMapRect();
+    const x = Number(coords?.x || 0);
+    const y = Number(coords?.y || 0);
+    const nx = (x - bounds.minX) / Math.max(1, (bounds.maxX - bounds.minX));
+    const ny = (y - bounds.minY) / Math.max(1, (bounds.maxY - bounds.minY));
+    const px = rect.left + (Math.max(0, Math.min(1, nx)) * rect.width);
+    const py = rect.bottom - (Math.max(0, Math.min(1, ny)) * rect.height);
+    return { x: px, y: py };
+}
+
+function getLiveMapVisibleUnits() {
+    const state = getLiveMapState();
+    const filter = String(state.filter || 'all');
+    return (MDT.state.units || []).filter((unit) => {
+        if (!unit || !unit.coords || unit.status === 'OFFDUTY') return false;
+        const service = normalizeLiveMapService(unit.department);
+        if (filter !== 'all' && service !== filter) return false;
+        return Number(unit.coords.x) === Number(unit.coords.x) && Number(unit.coords.y) === Number(unit.coords.y);
+    });
+}
+
+function liveMapIconMarkup(service, overrideIcon = null) {
+    const cfg = getLiveMapConfig();
+    const icon = overrideIcon || (((cfg.icons || {})[service]) || {});
+    const imageUrl = String(icon.imageUrl || '').trim();
+    if (imageUrl) {
+        return `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(icon.label || service)}" />`;
+    }
+    const className = String(icon.className || '').trim();
+    if (className) {
+        return `<i class="${escapeHtml(className)}"></i>`;
+    }
+    return `<span>${escapeHtml(icon.emoji || '•')}</span>`;
+}
+
+function describeLiveMapUnit(unit) {
+    if (!unit) return '';
+    return String(unit.locationText || unit.streetLabel || unit.street || unit.lastStreet || '').trim();
+}
+
+function selectedLiveMapUnit() {
+    const state = getLiveMapState();
+    const targetId = String(state.selectedUnitId || '').trim();
+    if (!targetId) return null;
+    return (getLiveMapVisibleUnits() || []).find((unit) => String(unit.id || '') === targetId) || null;
+}
+
+function ensureLiveMapViewReady() {
+    const state = getLiveMapState();
+    const viewport = MDT.els.liveMapViewport;
+    if (!viewport) return;
+    if (!state.view.ready) {
+        const cfg = getLiveMapConfig();
+        const half = (Math.max(512, Number(cfg.stageSize || 2048) || 2048) * 0.5);
+        state.view.scale = 1.05;
+        state.view.x = (viewport.clientWidth * 0.5) - (half * state.view.scale);
+        state.view.y = (viewport.clientHeight * 0.5) - (half * state.view.scale);
+        state.view.ready = true;
+    }
+}
+
+function updateLiveMapTransform() {
+    const state = getLiveMapState();
+    if (!MDT.els.liveMapStage) return;
+    ensureLiveMapViewReady();
+    MDT.els.liveMapStage.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+}
+
+function liveMapFocusUnits(units) {
+    const viewport = MDT.els.liveMapViewport;
+    const state = getLiveMapState();
+    if (!viewport || !units || !units.length) return;
+    const points = units.map((unit) => worldToLiveMapPoint(unit.coords));
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y));
+    const pad = 100;
+    const spanX = Math.max(180, (maxX - minX) + pad);
+    const spanY = Math.max(180, (maxY - minY) + pad);
+    const scaleX = viewport.clientWidth / spanX;
+    const scaleY = viewport.clientHeight / spanY;
+    state.view.scale = Math.max(0.55, Math.min(2.6, Math.min(scaleX, scaleY)));
+    const midX = (minX + maxX) * 0.5;
+    const midY = (minY + maxY) * 0.5;
+    state.view.x = (viewport.clientWidth * 0.5) - (midX * state.view.scale);
+    state.view.y = (viewport.clientHeight * 0.5) - (midY * state.view.scale);
+    state.view.ready = true;
+    state.view.hasFitted = true;
+    updateLiveMapTransform();
+}
+
+function getCurrentOfficerUnitId() {
+    const officer = MDT.state.officer || {};
+    return String(officer.source ?? officer.playerSource ?? officer.src ?? officer.id ?? '').trim();
+}
+
+function centerLiveMapOnUnit() {
+    const meId = getCurrentOfficerUnitId();
+    const me = (MDT.state.units || []).find((u) => String(u.id || '') === meId && u.coords);
+    const viewport = MDT.els.liveMapViewport;
+    const state = getLiveMapState();
+    if (!viewport || !me || !me.coords) return;
+    const point = worldToLiveMapPoint(me.coords);
+    ensureLiveMapViewReady();
+    state.view.x = (viewport.clientWidth * 0.5) - (point.x * state.view.scale);
+    state.view.y = (viewport.clientHeight * 0.5) - (point.y * state.view.scale);
+    updateLiveMapTransform();
+}
+
+function maybeLoadLiveMapPostals() {
+    const state = getLiveMapState();
+    const cfg = getLiveMapConfig();
+    if (!cfg.showPostalLabels || state.postalsLoaded) return;
+    state.postalsLoaded = true;
+    fetch('config/postals.json').then((r) => r.json()).then((rows) => {
+        state.postals = Array.isArray(rows) ? rows.slice(0, 3000) : [];
+        renderLiveMap();
+    }).catch(() => {
+        state.postals = [];
+    });
+}
+
+function renderLiveMapPostals() {
+    if (!MDT.els.liveMapPostals) return;
+    const state = getLiveMapState();
+    const cfg = getLiveMapConfig();
+    if (!cfg.showPostalLabels || !Array.isArray(state.postals) || state.view.scale < 1.3) {
+        MDT.els.liveMapPostals.innerHTML = '';
+        return;
+    }
+    const samples = state.postals.filter((_, idx) => idx % 30 === 0).slice(0, 100);
+    MDT.els.liveMapPostals.innerHTML = samples.map((row) => {
+        const point = worldToLiveMapPoint({ x: row.x, y: row.y });
+        const code = escapeHtml(row.code || row.postal || '');
+        return `<div class="mdt-live-map-postal" style="left:${point.x}px;top:${point.y}px;">${code}</div>`;
+    }).join('');
+}
+
+function renderLiveMapIconEditors() {
+    const state = getLiveMapState();
+    const cfg = getLiveMapConfig();
+    ['police', 'fire', 'ems'].forEach((service) => {
+        const icon = (((cfg.icons || {})[service]) || {});
+        const classInput = document.querySelector(`[data-live-map-class="${service}"]`);
+        const urlInput = document.querySelector(`[data-live-map-url="${service}"]`);
+        const preview = document.querySelector(`[data-live-map-preview="${service}"]`);
+        const previewIcon = {
+            ...icon,
+            className: String(classInput?.value || icon.className || '').trim(),
+            imageUrl: String((state.pendingUploads || {})[service] || urlInput?.value || icon.imageUrl || '').trim()
+        };
+        if (classInput && document.activeElement !== classInput) classInput.value = icon.className || '';
+        if (urlInput && document.activeElement !== urlInput) urlInput.value = icon.imageUrl || '';
+        if (preview) preview.innerHTML = `<div class="mdt-live-map-marker-icon service-${service}">${liveMapIconMarkup(service, previewIcon)}</div>`;
+    });
+    if (MDT.els.liveMapIconSettingsToggle) {
+        MDT.els.liveMapIconSettingsToggle.classList.toggle('hidden', !MDT.state.isAdmin);
+    }
+}
+
+function collectLiveMapIconPayload(resetDefaults = false) {
+    if (resetDefaults) {
+        const defaults = getLiveMapDefaults();
+        return JSON.parse(JSON.stringify(defaults.icons || {}));
+    }
+    const state = getLiveMapState();
+    const cfg = getLiveMapConfig();
+    const out = {};
+    ['police', 'fire', 'ems'].forEach((service) => {
+        const classInput = document.querySelector(`[data-live-map-class="${service}"]`);
+        const urlInput = document.querySelector(`[data-live-map-url="${service}"]`);
+        const uploaded = (state.pendingUploads || {})[service] || '';
+        const imageUrl = uploaded || String(urlInput?.value || '').trim() || String((((cfg.icons || {})[service]) || {}).imageUrl || '').trim();
+        out[service] = {
+            className: String(classInput?.value || '').trim() || String((((cfg.icons || {})[service]) || {}).className || '').trim(),
+            imageUrl,
+            label: String((((cfg.icons || {})[service]) || {}).label || service).trim(),
+            emoji: String((((cfg.icons || {})[service]) || {}).emoji || '').trim()
+        };
+    });
+    return out;
+}
+
+
+function applyLiveMapVisualConfig() {
+    const cfg = getLiveMapConfig();
+    const stageSize = Math.max(512, Number(cfg.stageSize || 2048) || 2048);
+    if (MDT.els.liveMapStage) {
+        MDT.els.liveMapStage.style.width = `${stageSize}px`;
+        MDT.els.liveMapStage.style.height = `${stageSize}px`;
+    }
+    const base = MDT.els.liveMapShell ? MDT.els.liveMapShell.querySelector('.mdt-live-map-base') : null;
+    if (base) {
+        const mapImage = String(cfg.mapImage || '').trim();
+        base.style.backgroundImage = mapImage ? `linear-gradient(rgba(2,6,23,0.08), rgba(2,6,23,0.18)), url("${mapImage.replace(/"/g, '&quot;')}")` : '';
+        base.style.backgroundSize = 'cover';
+        base.style.backgroundPosition = 'center center';
+        base.style.backgroundRepeat = 'no-repeat';
+    }
+}
+
+function renderLiveMap() {
+    if (!MDT.els.liveMapMarkers || !MDT.els.liveMapShell) return;
+    const state = getLiveMapState();
+    const units = getLiveMapVisibleUnits();
+    applyLiveMapVisualConfig();
+    ensureLiveMapViewReady();
+    if (!state.view.hasFitted && units.length) {
+        const meId = getCurrentOfficerUnitId();
+        const mine = units.find((unit) => String(unit.id || '') === meId && unit.coords);
+        if (mine) centerLiveMapOnUnit();
+        else liveMapFocusUnits(units);
+        state.view.hasFitted = true;
+    }
+    if (state.selectedUnitId && !units.find((unit) => String(unit.id || '') === String(state.selectedUnitId))) {
+        state.selectedUnitId = '';
+    }
+    MDT.els.liveMapEmpty.classList.toggle('hidden', units.length > 0);
+    if (MDT.els.liveMapStatus) {
+        MDT.els.liveMapStatus.textContent = `${units.length} unit${units.length === 1 ? '' : 's'} • ${(state.filter || 'all').toUpperCase()}`;
+    }
+    const meId = getCurrentOfficerUnitId();
+    const selectedId = String(state.selectedUnitId || '');
+    MDT.els.liveMapMarkers.innerHTML = units.map((unit) => {
+        const point = worldToLiveMapPoint(unit.coords || {});
+        const service = normalizeLiveMapService(unit.department);
+        const unitId = String(unit.id || '');
+        const isCurrent = unitId === meId;
+        const isSelected = unitId !== '' && unitId === selectedId;
+        const callsign = escapeHtml(unit.callsign || `Unit ${unitId || '—'}`);
+        const name = escapeHtml(unit.name || `Unit ${unitId || ''}`);
+        const status = escapeHtml(unit.status || 'AVAILABLE');
+        const dept = escapeHtml((unit.department || service).toUpperCase());
+        const location = escapeHtml(describeLiveMapUnit(unit) || 'Street unavailable');
+        const updatedAt = unit.updatedAt ? escapeHtml(new Date(Number(unit.updatedAt) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '';
+        return `<div class="mdt-live-map-marker ${isCurrent ? 'current' : ''} ${isSelected ? 'selected' : ''}" data-live-map-unit-id="${escapeAttr(unitId)}" style="left:${point.x}px;top:${point.y}px;">
+            <button class="mdt-live-map-marker-hit" type="button" aria-label="Open unit ${callsign}">
+                <div class="mdt-live-map-marker-pin service-${service}">${liveMapIconMarkup(service)}</div>
+                <div class="mdt-live-map-marker-tag">${callsign}</div>
+            </button>
+            <div class="mdt-live-map-tooltip ${isSelected ? '' : 'hidden'}">
+                <div class="mdt-live-map-tooltip-title">${callsign} · ${name}</div>
+                <div class="mdt-live-map-tooltip-meta">${dept} · ${status}</div>
+                <div class="mdt-live-map-tooltip-row"><strong>Street</strong><span>${location}</span></div>
+                <div class="mdt-live-map-tooltip-row"><strong>Unit #</strong><span>${escapeHtml(unitId || '—')}</span></div>
+                ${updatedAt ? `<div class="mdt-live-map-tooltip-row"><strong>Updated</strong><span>${updatedAt}</span></div>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+    renderLiveMapIconEditors();
+    renderLiveMapPostals();
+    updateLiveMapTransform();
+}
+
+
+function initLiveMap() {
+    const state = getLiveMapState();
+    if (state.initialized) return;
+    const viewport = MDT.els.liveMapViewport;
+    const shell = MDT.els.liveMapShell || viewport;
+    if (!viewport || !shell) return;
+    state.initialized = true;
+    maybeLoadLiveMapPostals();
+
+    const beginDrag = (clientX, clientY) => {
+        state.dragging.active = true;
+        state.dragging.startX = clientX;
+        state.dragging.startY = clientY;
+        state.dragging.baseX = state.view.x || 0;
+        state.dragging.baseY = state.view.y || 0;
+        viewport.classList.add('is-dragging');
+    };
+
+    const moveDrag = (clientX, clientY) => {
+        if (!state.dragging.active) return;
+        state.view.x = state.dragging.baseX + (clientX - state.dragging.startX);
+        state.view.y = state.dragging.baseY + (clientY - state.dragging.startY);
+        updateLiveMapTransform();
+    };
+
+    const endDrag = () => {
+        if (!state.dragging.active) return;
+        state.dragging.active = false;
+        viewport.classList.remove('is-dragging');
+    };
+
+    const handleWheel = (event) => {
+        event.preventDefault();
+        const rect = viewport.getBoundingClientRect();
+        const cursorX = event.clientX - rect.left;
+        const cursorY = event.clientY - rect.top;
+        const oldScale = state.view.scale || 1;
+        const nextScale = Math.max(0.55, Math.min(3.4, oldScale * (event.deltaY < 0 ? 1.12 : 0.9)));
+        state.view.x = cursorX - ((cursorX - state.view.x) * (nextScale / oldScale));
+        state.view.y = cursorY - ((cursorY - state.view.y) * (nextScale / oldScale));
+        state.view.scale = nextScale;
+        state.view.ready = true;
+        updateLiveMapTransform();
+        renderLiveMapPostals();
+    };
+
+    [viewport, shell].forEach((target) => {
+        target.addEventListener('mousedown', (event) => {
+            if (event.button !== 0) return;
+            if (event.target && event.target.closest && event.target.closest('[data-live-map-unit-id]')) return;
+            event.preventDefault();
+            beginDrag(event.clientX, event.clientY);
+        });
+        target.addEventListener('wheel', handleWheel, { passive: false });
+        target.addEventListener('touchstart', (event) => {
+            const touch = event.touches && event.touches[0];
+            if (!touch) return;
+            if (event.target && event.target.closest && event.target.closest('[data-live-map-unit-id]')) return;
+            event.preventDefault();
+            beginDrag(touch.clientX, touch.clientY);
+        }, { passive: false });
+        target.addEventListener('touchmove', (event) => {
+            const touch = event.touches && event.touches[0];
+            if (!touch) return;
+            event.preventDefault();
+            moveDrag(touch.clientX, touch.clientY);
+        }, { passive: false });
+    });
+    window.addEventListener('mousemove', (event) => moveDrag(event.clientX, event.clientY));
+    window.addEventListener('mouseup', endDrag);
+    window.addEventListener('touchend', endDrag, { passive: true });
+    window.addEventListener('touchcancel', endDrag, { passive: true });
+    viewport.addEventListener('mouseleave', () => { if (state.dragging.active) endDrag(); });
+    document.querySelectorAll('[data-live-map-filter]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-live-map-filter]').forEach((node) => node.classList.remove('active'));
+            btn.classList.add('active');
+            state.filter = btn.dataset.liveMapFilter || 'all';
+            renderLiveMap();
+        });
+    });
+    MDT.els.liveMapCenterMe?.addEventListener('click', () => centerLiveMapOnUnit());
+    MDT.els.liveMapFitAll?.addEventListener('click', () => liveMapFocusUnits(getLiveMapVisibleUnits()));
+    MDT.els.liveMapIconSettingsToggle?.addEventListener('click', () => MDT.els.liveMapIconSettings?.classList.toggle('hidden'));
+    MDT.els.liveMapIconsReset?.addEventListener('click', () => {
+        state.pendingUploads = {};
+        applyLiveMapState({ ...getLiveMapConfig(), icons: collectLiveMapIconPayload(true) });
+    });
+    MDT.els.liveMapIconsSave?.addEventListener('click', () => {
+        const payload = collectLiveMapIconPayload(false);
+        if (MDT_RUNTIME.isBrowser) browserHandleAction('SaveLiveMapIcons', payload);
+        else nuiPost('SaveLiveMapIcons', payload);
+        applyLiveMapState({ ...getLiveMapConfig(), icons: payload });
+        pushNotification({ type: 'success', title: 'LiveMap', message: 'Live map icons saved.' });
+    });
+    document.querySelectorAll('[data-live-map-file]').forEach((input) => {
+        input.addEventListener('change', () => {
+            const service = input.dataset.liveMapFile;
+            const file = input.files && input.files[0];
+            if (!service || !file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                state.pendingUploads = state.pendingUploads || {};
+                state.pendingUploads[service] = String(reader.result || '');
+                renderLiveMapIconEditors();
+            };
+            reader.readAsDataURL(file);
+        });
+    });
+    MDT.els.liveMapMarkers?.addEventListener('click', (event) => {
+        const marker = event.target && event.target.closest ? event.target.closest('[data-live-map-unit-id]') : null;
+        if (!marker) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const unitId = String(marker.dataset.liveMapUnitId || '');
+        state.selectedUnitId = (state.selectedUnitId === unitId) ? '' : unitId;
+        renderLiveMap();
+    });
+    shell.addEventListener('click', (event) => {
+        const marker = event.target && event.target.closest ? event.target.closest('[data-live-map-unit-id]') : null;
+        if (marker) return;
+        if (state.selectedUnitId) {
+            state.selectedUnitId = '';
+            renderLiveMap();
+        }
+    });
+    window.addEventListener('resize', () => {
+        updateLiveMapTransform();
+        renderLiveMap();
+    });
+}
+
+function isCurrentOfficerAttachedToCall(call) {
+    const officer = MDT.state.officer || {};
+    const meSource = String(officer.source ?? officer.playerSource ?? officer.src ?? '').trim();
+    const meId = String(officer.id || '').trim();
+    const meCallsign = String(officer.callsign || '').trim().toUpperCase();
+    const meName = String(officer.name || '').trim().toUpperCase();
+    const units = Array.isArray(call && call.units) ? call.units : [];
+    return units.some((unit) => {
+        if (!unit || typeof unit !== 'object') return false;
+        const unitId = String(unit.id ?? unit.source ?? unit.sourceId ?? unit.unit_source ?? '').trim();
+        const unitCallsign = String(unit.callsign || unit.unit || '').trim().toUpperCase();
+        const unitName = String(unit.name || '').trim().toUpperCase();
+        if (meSource && unitId && unitId === meSource) return true;
+        if (meId && unitId && unitId === meId) return true;
+        if (meCallsign && unitCallsign && unitCallsign === meCallsign) return true;
+        if (meName && unitName && unitName === meName) return true;
+        return false;
+    });
+}
+
+function syncAttachedCallRoomFromList(list) {
+    const calls = Array.isArray(list) ? list : [];
+    const attached = calls
+        .filter(isCurrentOfficerAttachedToCall)
+        .sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
+
+    if (!attached.length) return;
+
+    const preferred = attached[0] || {};
+    const preferredId = Number(preferred.id || 0);
+    if (!preferredId) return;
+
+    const activeId = Number(MDT.state.activeCallRoom || 0);
+    const activeStillAttached = activeId > 0 && attached.some((call) => Number(call?.id || 0) === activeId);
+    const hasPreferredRoom = !!MDT.state.callRooms[preferredId];
+
+    if (activeStillAttached && MDT.state.callRooms[activeId]) {
+        return;
+    }
+
+    if (hasPreferredRoom) {
+        MDT.state.activeCallRoom = preferredId;
+        renderActiveCallRoom();
+        setActivePage('callsHub');
+        return;
+    }
+
+    if (MDT.state.pendingCallRoomRequest === preferredId) {
+        return;
+    }
+
+    MDT.state.pendingCallRoomRequest = preferredId;
+    Promise.resolve(nuiPost('RequestCallRoom', { callId: preferredId }))
+        .catch(() => {})
+        .finally(() => {
+            if (MDT.state.pendingCallRoomRequest === preferredId) {
+                MDT.state.pendingCallRoomRequest = null;
+            }
+        });
 }
 
 function renderCalls(list) {
@@ -2755,6 +3514,8 @@ function renderCalls(list) {
         div.className = 'mdt-row';
 
         const units = (c.units || []).map(u => u.callsign || u.name || u.id).join(', ');
+        const isAttached = isCurrentOfficerAttachedToCall(c);
+        const attachmentNote = isAttached ? '<span class="mdt-row-tag" style="margin-left:8px;">ATTACHED</span>' : '';
 
         let adminButton = '';
         if (canManageDispatchControls() && canUseAction('clearCalls') && c.id) {
@@ -2770,7 +3531,7 @@ function renderCalls(list) {
         div.innerHTML = `
             <div class="mdt-row-header">
                 <div class="mdt-row-title">#${c.id} – ${escapeHtml(c.location || 'Unknown location')}</div>
-                <span class="mdt-row-tag">${(c.status || 'PENDING').toUpperCase()}</span>
+                <div style="display:flex;align-items:center;gap:8px;">${attachmentNote}<span class="mdt-row-tag">${(c.status || 'PENDING').toUpperCase()}</span></div>
             </div>
             <div class="mdt-row-meta">
                 <span>Caller: ${escapeHtml(c.caller || 'Unknown')}</span>
@@ -2780,8 +3541,9 @@ function renderCalls(list) {
             </div>
             <div class="mdt-row-body">${escapeHtml(String(c.message || '')).replace(/\n/g, '<br>')}</div>
             <div class="mdt-row-actions">
-                ${conditionalButton(canUseAction('attachCalls'), `<button class="btn-xs btn-primary" data-call-action="attach" data-call-id="${c.id}">Attach</button>`)}
-                ${conditionalButton(canUseAction('detachCalls') && (MDT_RUNTIME.isBrowser ? (MDT.state.officer?.canAttachDetach || isLeoLikeRole()) : isLeoLikeRole()), `<button class="btn-xs btn-secondary" data-call-action="detach" data-call-id="${c.id}">Detach</button>`)}
+                ${conditionalButton(canUseAction('attachCalls') && !isAttached, `<button class="btn-xs btn-primary" data-call-action="attach" data-call-id="${c.id}">Attach</button>`)}
+                ${conditionalButton(canUseAction('attachCalls') && isAttached, `<button class="btn-xs btn-primary" disabled>Attached</button>`)}
+                ${conditionalButton(canUseAction('detachCalls') && isAttached && (MDT_RUNTIME.isBrowser ? (MDT.state.officer?.canAttachDetach || isLeoLikeRole()) : isLeoLikeRole()), `<button class="btn-xs btn-secondary" data-call-action="detach" data-call-id="${c.id}">Detach</button>`)}
                 ${conditionalButton(canUseAction('waypointCalls'), `<button class="btn-xs btn-secondary" data-call-action="waypoint" data-call-id="${c.id}">Waypoint</button>`)}
                 ${adminButton}
             </div>
@@ -3101,6 +3863,7 @@ function handleIncomingMessage(msg) {
             MDT.state.ttsEnabled = isSpeechTtsEnabled();
             MDT.state.themeSettings = normalizeThemeSettings((MDT.state.officer.ui && MDT.state.officer.ui.theme) || MDT.state.themeSettings);
             applyTheme(MDT.state.themeSettings);
+            applyLiveMapState((MDT.state.officer.ui && MDT.state.officer.ui.liveMap) || MDT.state.liveMap.config);
             MDT.state.status = MDT.state.officer.status || (isLeoLikeRole() ? 'OFFDUTY' : 'CIV');
             MDT.state.isAdmin = !!MDT.state.officer.isAdmin;
             MDT.state.isSupervisor = !!MDT.state.officer.isSupervisor;
@@ -3110,6 +3873,8 @@ function handleIncomingMessage(msg) {
             applyRoleUI();
             renderOfficer();
             updateAdminUI();
+            renderLiveMapIconEditors();
+            renderLiveMap();
             MDT.state.callHistory = [];
             MDT.state.myCivilians = [];
             MDT.state.selectedCivilianId = null;
@@ -3146,6 +3911,7 @@ function handleIncomingMessage(msg) {
                 if (MDT.els.unitsList) MDT.els.unitsList.innerHTML = '<div class="mdt-empty">Civilian access does not include active units.</div>';
                 if (MDT.els.callsList) MDT.els.callsList.innerHTML = '<div class="mdt-empty">Civilian access does not include active calls.</div>';
                 if (MDT.els.dashboardBolos) MDT.els.dashboardBolos.innerHTML = '<div class="mdt-empty">Civilian access does not include BOLOs.</div>';
+                if (MDT.els.liveMapEmpty) MDT.els.liveMapEmpty.classList.remove('hidden');
                 nuiPost('SearchReports', {});
                 nuiPost('RequestMyCivilians', {});
             }
@@ -3282,7 +4048,34 @@ function handleIncomingMessage(msg) {
         case 'unitsUpdate': {
             const list = safeParse(msg.data, 'unitsUpdate') || msg.data || [];
             MDT.state.units = list;
+            const officer = MDT.state.officer || {};
+            const meSource = String(officer.source ?? officer.playerSource ?? officer.src ?? '').trim();
+            const meId = String(officer.id || '').trim();
+            const meCallsign = String(officer.callsign || '').trim().toUpperCase();
+            const meName = String(officer.name || '').trim().toUpperCase();
+            const mine = list.find(u => {
+                const unitId = String(u.id ?? u.source ?? u.sourceId ?? u.unit_source ?? '').trim();
+                const unitCallsign = String(u.callsign || '').trim().toUpperCase();
+                const unitName = String(u.name || '').trim().toUpperCase();
+                return (meSource && unitId === meSource)
+                    || (meId && unitId === meId)
+                    || (meCallsign && unitCallsign === meCallsign)
+                    || (meName && unitName === meName);
+            });
+            if (mine) {
+                if (mine.status) MDT.state.status = String(mine.status).toUpperCase();
+                MDT.state.officer = {
+                    ...(MDT.state.officer || {}),
+                    source: mine.id ?? mine.source ?? mine.sourceId ?? mine.unit_source ?? (MDT.state.officer || {}).source,
+                    playerSource: mine.id ?? mine.source ?? mine.sourceId ?? mine.unit_source ?? (MDT.state.officer || {}).playerSource,
+                    department: mine.department || (MDT.state.officer || {}).department,
+                    callsign: mine.callsign ?? (MDT.state.officer || {}).callsign,
+                    name: mine.name || (MDT.state.officer || {}).name
+                };
+                renderOfficer();
+            }
             renderUnits(list);
+            renderLiveMap();
             break;
         }
 
@@ -3290,6 +4083,7 @@ function handleIncomingMessage(msg) {
             const list = safeParse(msg.data, 'callList') || msg.data || [];
             MDT.state.calls = list;
             renderCalls(list);
+            syncAttachedCallRoomFromList(list);
             break;
         }
 
@@ -3298,15 +4092,8 @@ function handleIncomingMessage(msg) {
             if (call && call.id && !MDT.state.seenCalls[call.id]) {
                 MDT.state.seenCalls[call.id] = true;
                 playSound('call');
-                const loc = call.location || 'unknown location';
-                const postal = call.postal ? `, postal ${call.postal}` : '';
-                pushNotify({
-                    type: 'call',
-                    title: `New 911 Call #${call.id}`,
-                    message: `${loc}${call.postal ? ` • Postal ${call.postal}` : ''}`,
-                    duration: 6500
-                });
-                speak(`New nine one one call at ${loc}${postal}.`);
+                emitCallBanner(call);
+                speak(buildCallSpeechText(call));
             }
             break;
         }
@@ -3326,10 +4113,9 @@ function handleIncomingMessage(msg) {
                 if (isPending && !MDT.state.seenCalls[call.id]) {
                     MDT.state.seenCalls[call.id] = true;
                     playSound('call');
-                    const loc = call.location || 'unknown location';
-                    const postal = call.postal ? `, postal ${call.postal}` : '';
+                    emitCallBanner(call);
                     if (getCallTtsMode() === 'all_onduty') {
-                        speak(`New nine one one call at ${loc}${postal}.`);
+                        speak(buildCallSpeechText(call));
                     }
                 }
             }
@@ -3424,13 +4210,17 @@ function handleIncomingMessage(msg) {
             const payload = safeParse(msg.data, 'callRoomOpened') || msg.data || {};
             if (payload.callId) {
                 const callMeta = MDT.state.calls.find(c => c.id === payload.callId) || {};
+                const alreadyOpen = !!MDT.state.callRooms[payload.callId];
                 payload.postal = payload.postal || callMeta.postal || null;
                 MDT.state.callRooms[payload.callId] = payload;
                 MDT.state.activeCallRoom = payload.callId;
+                if (MDT.state.pendingCallRoomRequest === payload.callId) {
+                    MDT.state.pendingCallRoomRequest = null;
+                }
                 renderActiveCallRoom();
                 setActivePage('callsHub');
 
-                if (shouldAnnounceCallRoom(payload.callId)) {
+                if (!alreadyOpen && shouldAnnounceCallRoom(payload.callId)) {
                     const loc = payload.location || callMeta.location || 'unknown location';
                     const postal = payload.postal ? `, postal ${payload.postal}` : '';
                     playSound('call');
@@ -3525,6 +4315,12 @@ function handleIncomingMessage(msg) {
             }
             renderThemeStudio();
             applyTheme(MDT.state.themeSettings);
+            break;
+        }
+
+        case 'liveMapIcons': {
+            const payload = safeParse(msg.data, 'liveMapIcons') || msg.data || {};
+            applyLiveMapState(payload);
             break;
         }
 
@@ -3647,6 +4443,11 @@ function refreshActiveView() {
         nuiPost('GetBolos', {});
         return;
     }
+    if (page === 'liveMap') {
+        nuiPost('GetUnits', {});
+        if (MDT_RUNTIME.isBrowser) nuiPost('GetLiveMapIcons', {});
+        return;
+    }
     if (page === 'employees') {
         nuiPost('ViewEmployees', {});
         return;
@@ -3668,9 +4469,10 @@ function refreshActiveView() {
         return;
     }
     if (page === 'nameSearch') {
-        const first = (MDT.state.lastQueries.nameFirst || MDT.els.nameFirst?.value || '').trim();
-        const last = (MDT.state.lastQueries.nameLast || MDT.els.nameLast?.value || '').trim();
-        if (first || last) {
+        const first = (MDT.els.nameFirst?.value || MDT.state.lastQueries.nameFirst || '').trim();
+        const last = (MDT.els.nameLast?.value || MDT.state.lastQueries.nameLast || '').trim();
+        const full = normalizeNameToken(`${first} ${last}`);
+        if ((first || last) && !isPlaceholderNameValue(first) && !isPlaceholderNameValue(last) && full !== 'unknown unknown') {
             MDT.state.lastQueries.nameFirst = first;
             MDT.state.lastQueries.nameLast = last;
             nuiPost('NameSearch', buildNameSearchPayload(first, last));
@@ -3718,7 +4520,16 @@ function refreshActiveView() {
 function startLiveRefreshLoop() {
     if (MDT.state.liveRefreshStarted) return;
     MDT.state.liveRefreshStarted = true;
-    window.setInterval(() => refreshActiveView(), MDT_RUNTIME.isBrowser ? 5000 : 4000);
+
+
+
+
+
+    if (!MDT_RUNTIME.isBrowser) {
+        return;
+    }
+
+    window.setInterval(() => refreshActiveView(), 5000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -3793,6 +4604,21 @@ document.addEventListener('DOMContentLoaded', () => {
     MDT.els.unitsList      = document.getElementById('mdt-units-list');
     MDT.els.callsList      = document.getElementById('mdt-calls-list');
     MDT.els.dashboardBolos = document.getElementById('mdt-dashboard-bolos');
+    MDT.els.liveMapShell = document.getElementById('mdt-live-map');
+    MDT.els.liveMapViewport = document.getElementById('mdt-live-map-viewport');
+    MDT.els.liveMapStage = document.getElementById('mdt-live-map-stage');
+    MDT.els.liveMapMarkers = document.getElementById('mdt-live-map-markers');
+    MDT.els.liveMapPostals = document.getElementById('mdt-live-map-postals');
+    MDT.els.liveMapEmpty = document.getElementById('mdt-live-map-empty');
+    MDT.els.liveMapStatus = document.getElementById('mdt-live-map-status');
+    MDT.els.liveMapFilterBar = document.getElementById('mdt-live-map-filter');
+    MDT.els.liveMapCenterMe = document.getElementById('mdt-live-map-center-me');
+    MDT.els.liveMapFitAll = document.getElementById('mdt-live-map-fit-all');
+    MDT.els.liveMapIconSettingsToggle = document.getElementById('mdt-live-map-icon-settings-toggle');
+    MDT.els.liveMapIconSettings = document.getElementById('mdt-live-map-icon-settings');
+    MDT.els.liveMapIconsSave = document.getElementById('mdt-live-map-icons-save');
+    MDT.els.liveMapIconsReset = document.getElementById('mdt-live-map-icons-reset');
+    initLiveMap();
 
     MDT.els.chatForm        = document.getElementById('livechat-form');
     MDT.els.chatMessages    = document.getElementById('livechat-messages');
@@ -3929,6 +4755,10 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (section === 'dashboard') {
                 nuiPost('GetUnits', {});
                 nuiPost('GetCalls', {});
+            } else if (section === 'liveMap') {
+                nuiPost('GetUnits', {});
+                if (MDT_RUNTIME.isBrowser) nuiPost('GetLiveMapIcons', {});
+                renderLiveMap();
             } else if (section === 'warrants') {
                 nuiPost('GetWarrants', {});
             } else if (section === 'iaLogs') {
@@ -4512,7 +5342,10 @@ document.addEventListener('DOMContentLoaded', () => {
             MDT.state.leoChat = [];
             renderOfficer();
             renderLeoChat();
-            nuiPost('SetDutyState', { onDuty: !onDuty });
+            nuiPost('SetDutyState', {
+                onDuty: !onDuty,
+                department: MDT.els.departmentSelect?.value || (MDT.state.officer || {}).department || ''
+            });
             if (!onDuty) {
                 MDT.state.status = 'AVAILABLE';
                 if (MDT.els.statusSelect) MDT.els.statusSelect.value = 'AVAILABLE';

@@ -1,60 +1,59 @@
-# Az-MDT
+# Az MDT
 
-Standalone Mobile Data Terminal using MySQL and ACE permissions.
+Standalone Mobile Data Terminal with MySQL + ACE permission support
 
-## What changed
-- Removed the hard dependency on Az-Framework.
-- Keeps MySQL support through oxmysql or mysql-async.
-- Uses ACE permissions from `config.lua`.
-- Uses standalone tables for citizens, vehicles, weapons, and employees.
+[Framework Docs](https://madebyazure.com/framework/) | [Discord Support](https://discord.gg/tBg2U6CTHE)
 
-## Permissions
-Set your permissions in `config.lua`, then grant them in `server.cfg`.
+## Status
 
-Example:
+- Resource: `Az-MDT`
+- Version: `cerulean`
+- Framework: `Az-Framework`
+
+## Install
+
 ```cfg
-add_ace group.leo az_mdt.open allow
-add_ace group.command az_mdt.admin allow
+ensure oxmysql
+ensure ox_lib
+ensure Az-Framework
+ensure Az-MDT
 ```
 
-## Commands
-- `/mdt`
-- `/911`
+<details>
+<summary>Dependencies</summary>
 
-## Notes
-The resource auto-creates its MySQL tables on start.
+- `Az-Framework`
 
 
-## Added in this standalone ACE build
+</details>
 
-- `/mdt` for LEO access
-- `/civmdt` for civilian / DMV access
-- ACE permissions:
-  - `az_mdt.open`
-  - `az_mdt.admin`
-  - `az_mdt.civ`
-  - `az_mdt.dmv`
-  - `az_mdt.leochat`
-- Civilian Center UI for creating/searching civilians
-- DMV lookup with license status updates
-- LEO duty chat that resets on duty state changes
-- Call rooms with per-call live chat + notes
-- Search past call numbers and reports
+<details>
+<summary>Configuration Guide</summary>
 
+1. Place the resource in your server resources folder.
+2. Start dependencies before this resource.
+3. Review `config.lua` or `shared/config.lua` when present.
+4. Restart the resource after changing config values.
 
-## Web endpoint
+</details>
 
-This build also serves a browser version from the resource itself using FiveM's HTTP handler.
+<details>
+<summary>Az-Framework Integration</summary>
 
-Open it at:
+Use Az-Framework exports for character, money, job, metadata, and inventory bridge behavior.
 
-`http://YOUR_SERVER_IP:30120/<resource-name>/`
+```lua
+local Az = exports['Az-Framework']:GetObject()
+local player = exports['Az-Framework']:GetPlayer(source)
+local snapshot = exports['Az-Framework']:GetBridgePlayerSnapshot(source)
+```
 
-Example if the folder/resource name is `az_mdt`:
+</details>
 
-`http://YOUR_SERVER_IP:30120/az_mdt/`
+<details>
+<summary>Support</summary>
 
-Notes:
-- Browser mode is read-only by default in this build.
-- Create/edit actions still happen in-game through NUI unless you add your own authenticated write endpoints.
-- You can lock the browser mode down with `Config.Web.publicReadOnly = false` and `Config.Web.readToken = "yourtoken"`.
+- Docs: https://madebyazure.com/framework/
+- Discord: https://discord.gg/tBg2U6CTHE
+
+</details>

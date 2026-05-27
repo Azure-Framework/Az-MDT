@@ -14,9 +14,10 @@
                 }
             } catch (e) {}
         })();
-    </script>
+</script>
     <title>Az-MDT</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
     <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -83,6 +84,7 @@
                 
                 <aside class="mdt-sidebar">
                     <button class="mdt-nav-btn active" data-page="dashboard">Dashboard</button>
+                    <button class="mdt-nav-btn" data-page="liveMap">Live Map</button>
                     <button class="mdt-nav-btn" data-page="nameSearch">Name Search</button>
                     <button class="mdt-nav-btn" data-page="plateSearch">Vehicle Search</button>
                     <button class="mdt-nav-btn" data-page="weaponSearch">Weapon Search</button>
@@ -90,7 +92,7 @@
                     <button class="mdt-nav-btn" data-page="reports">Reports</button>
                     <button class="mdt-nav-btn" data-page="dutyChat">LEO Duty Chat</button>
                     <button class="mdt-nav-btn" data-page="callsHub">Calls Hub</button>
-                    <button class="mdt-nav-btn" data-page="simTools">Sim / Scene Tools</button>
+                    <button class="mdt-nav-btn" data-page="simTools">Scene Tools</button>
                     <button class="mdt-nav-btn" data-page="civCenter">Civilian Center</button>
                     <button class="mdt-nav-btn" data-page="dmv">DMV</button>
                     <button class="mdt-nav-btn" data-page="warrants">Warrants</button>
@@ -126,6 +128,74 @@
                     </section>
 
                     
+                    <section id="page-liveMap" class="mdt-page" data-mdt-page="liveMap">
+                        <div class="mdt-card mdt-card-fill">
+                            <div class="mdt-card-header mdt-live-map-headerbar">
+                                <div>
+                                    <div class="mdt-live-map-title">Active Units LiveMap</div>
+                                    <div class="mdt-live-map-subtitle">Pan, zoom, filter by service, and track attached field units in real time.</div>
+                                </div>
+                                <div class="mdt-live-map-toolbar">
+                                    <div class="mdt-segmented" id="mdt-live-map-filter">
+                                        <button class="btn btn-sm btn-secondary active" data-live-map-filter="all">All</button>
+                                        <button class="btn btn-sm btn-secondary" data-live-map-filter="police">Police</button>
+                                        <button class="btn btn-sm btn-secondary" data-live-map-filter="fire">Fire</button>
+                                        <button class="btn btn-sm btn-secondary" data-live-map-filter="ems">EMS</button>
+                                    </div>
+                                    <button id="mdt-live-map-center-me" class="btn btn-sm btn-secondary">Center Me</button>
+                                    <button id="mdt-live-map-fit-all" class="btn btn-sm btn-secondary">Fit Units</button>
+                                    <button id="mdt-live-map-icon-settings-toggle" class="btn btn-sm btn-secondary hidden">Icon Settings</button>
+                                </div>
+                            </div>
+                            <div class="mdt-card-body mdt-live-map-page-body">
+                                <div id="mdt-live-map" class="mdt-live-map-shell">
+                                    <div class="mdt-live-map-hud">
+                                        <span id="mdt-live-map-status" class="mdt-status-pill">0 units</span>
+                                        <span class="mdt-live-map-help">Scroll to zoom • drag to move</span>
+                                    </div>
+                                    <div id="mdt-live-map-viewport" class="mdt-live-map-viewport">
+                                        <div id="mdt-live-map-stage" class="mdt-live-map-stage">
+                                            <div class="mdt-live-map-base"></div>
+                                            <div id="mdt-live-map-postals" class="mdt-live-map-postals"></div>
+                                            <div id="mdt-live-map-markers" class="mdt-live-map-markers"></div>
+                                        </div>
+                                    </div>
+                                    <div id="mdt-live-map-empty" class="mdt-live-map-empty hidden">No active units to display on the live map.</div>
+                                </div>
+                                <div id="mdt-live-map-icon-settings" class="mdt-card mdt-live-map-icons-panel hidden">
+                                    <div class="mdt-card-header">LiveMap Icon Manager</div>
+                                    <div class="mdt-card-body">
+                                        <div class="mdt-row-meta" style="margin-bottom:10px;">Use Font Awesome classes by default, or set a direct image URL / uploaded image per service. Uploaded files are saved into MDT config as data URLs.</div>
+                                        <div class="mdt-live-map-icon-grid">
+                                            <div class="mdt-live-map-icon-editor" data-live-map-service="police">
+                                                <div class="mdt-live-map-icon-preview" data-live-map-preview="police"></div>
+                                                <label><span>Police FA class</span><input type="text" data-live-map-class="police" placeholder="fa-solid fa-car-side" /></label>
+                                                <label><span>Police image URL</span><input type="text" data-live-map-url="police" placeholder="https://..." /></label>
+                                                <label><span>Police upload</span><input type="file" accept="image/*" data-live-map-file="police" /></label>
+                                            </div>
+                                            <div class="mdt-live-map-icon-editor" data-live-map-service="fire">
+                                                <div class="mdt-live-map-icon-preview" data-live-map-preview="fire"></div>
+                                                <label><span>Fire FA class</span><input type="text" data-live-map-class="fire" placeholder="fa-solid fa-fire-truck" /></label>
+                                                <label><span>Fire image URL</span><input type="text" data-live-map-url="fire" placeholder="https://..." /></label>
+                                                <label><span>Fire upload</span><input type="file" accept="image/*" data-live-map-file="fire" /></label>
+                                            </div>
+                                            <div class="mdt-live-map-icon-editor" data-live-map-service="ems">
+                                                <div class="mdt-live-map-icon-preview" data-live-map-preview="ems"></div>
+                                                <label><span>EMS FA class</span><input type="text" data-live-map-class="ems" placeholder="fa-solid fa-truck-medical" /></label>
+                                                <label><span>EMS image URL</span><input type="text" data-live-map-url="ems" placeholder="https://..." /></label>
+                                                <label><span>EMS upload</span><input type="file" accept="image/*" data-live-map-file="ems" /></label>
+                                            </div>
+                                        </div>
+                                        <div class="mdt-live-map-icon-actions">
+                                            <button id="mdt-live-map-icons-reset" class="btn btn-secondary">Reset Defaults</button>
+                                            <button id="mdt-live-map-icons-save" class="btn btn-primary">Save Icons</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
                     <section id="page-nameSearch" class="mdt-page" data-mdt-page="nameSearch">
                         <div class="mdt-card">
                             <div class="mdt-card-header">Name Search</div>

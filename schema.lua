@@ -1,8 +1,18 @@
 
+
+
+
+
+
+
+
 local RESOURCE_NAME = GetCurrentResourceName()
 
 Config = Config or {}
 if Config.Debug == nil then Config.Debug = true end
+
+
+
 
 local function dprint(...)
     if not Config.Debug then return end
@@ -10,6 +20,9 @@ local function dprint(...)
     for i = 1, #args do args[i] = tostring(args[i]) end
     print(("^3[%s SCHEMA]^7 %s"):format(RESOURCE_NAME, table.concat(args, " ")))
 end
+
+
+
 
 local DB = {}
 
@@ -37,6 +50,10 @@ function DB.execute(query, params, cb)
         cb(0)
     end
 end
+
+
+
+
 
 local schemaStatements = {
     {
@@ -169,6 +186,10 @@ local schemaStatements = {
         ]]
     }
 }
+
+
+
+
 
 local function ensureSchema()
     dprint("Ensuring MDT schema...")

@@ -22,15 +22,91 @@ Config.CharacterStateKeys = Config.CharacterStateKeys or {
     'citizenid', 'citizenId', 'charid', 'charId', 'characterid', 'characterId', 'character_id', 'cid'
 }
 
-local randomLinkCode
-local webSqlNow
-local getCharacter
-local webLinkCodeTtl
-local webConfiguredBaseUrl
-local ThemeState = nil
-local webSyncCallStatus
-local AccessCache = {}
-local PendingVehicleRegistration = {}
+randomLinkCode = randomLinkCode
+sourceHasFireDutyState = sourceHasFireDutyState
+resolveOpenUnitStatus = resolveOpenUnitStatus
+ensureUnitRegisteredForOperationalSource = ensureUnitRegisteredForOperationalSource
+resolveFireBridgeResourceName = resolveFireBridgeResourceName
+resolveParkRangerBridgeResourceName = resolveParkRangerBridgeResourceName
+resolvePoliceBridgeResourceName = resolvePoliceBridgeResourceName
+resolveAmbulanceBridgeResourceName = resolveAmbulanceBridgeResourceName
+webSqlNow = webSqlNow
+getCharacter = getCharacter
+webLinkCodeTtl = webLinkCodeTtl
+webConfiguredBaseUrl = webConfiguredBaseUrl
+ThemeState = ThemeState or nil
+webSyncCallStatus = webSyncCallStatus
+AccessCache = AccessCache or {}
+PendingVehicleRegistration = PendingVehicleRegistration or {}
+FireDutyHold = FireDutyHold or {}
+FIRE_DUTY_HOLD_SECONDS = FIRE_DUTY_HOLD_SECONDS or 30
+
+function markFireDutyHold(src, active)
+    src = tonumber(src) or 0
+    if src <= 0 then return end
+    if active == true then
+        FireDutyHold[src] = os.time() + FIRE_DUTY_HOLD_SECONDS
+    else
+        FireDutyHold[src] = nil
+    end
+end
+
+function hasFireDutyHold(src)
+    src = tonumber(src) or 0
+    if src <= 0 then return false end
+    local expires = tonumber(FireDutyHold[src] or 0) or 0
+    if expires <= 0 then return false end
+    if expires < os.time() then
+        FireDutyHold[src] = nil
+        return false
+    end
+    return true
+end
+
+function hasAzFramework()
+    local state = GetResourceState('Az-Framework')
+    return state == 'started' or state == 'starting'
+end
+
+function fwExport(name, ...)
+    if not hasAzFramework() then return nil end
+
+    local args = { ... }
+    local fw = exports['Az-Framework']
+    local fn = fw and fw[name]
+    if type(fn) ~= 'function' then return nil end
+
+    local ok, a, b, c, d, e = pcall(function()
+        return fn(fw, table.unpack(args))
+    end)
+    if ok then
+        return a, b, c, d, e
+    end
+
+    ok, a, b, c, d, e = pcall(function()
+        return fn(table.unpack(args))
+    end)
+    if ok then
+        return a, b, c, d, e
+    end
+
+    return nil
+end
+
+
+function getFrameworkJobName(src)
+    if Config.Standalone == false and hasAzFramework() then
+        local job = fwExport('getPlayerJob', src)
+        if type(job) == 'table' then
+            job = job.name or job.job or job.id or job.label
+        end
+        if job ~= nil then
+            return tostring(job)
+        end
+    end
+    return ''
+end
+
 
 local function safeTableName(name, fallback)
     name = tostring(name or fallback or "")
@@ -227,6 +303,33 @@ local function upper(s)
     return string.upper(tostring(s))
 end
 
+
+local function stripDispatchTokenPrefix(value)
+    local cleaned = trim(value)
+    if cleaned == '' then return '' end
+    cleaned = cleaned:gsub('^(%b[])%s*', '')
+    cleaned = cleaned:gsub('^(%b())%s*', '')
+    cleaned = cleaned:gsub('^(%b{})%s*', '')
+    return trim(cleaned)
+end
+
+local function prettifyServiceLabel(value)
+    local raw = trim(value)
+    if raw == '' then return 'Call' end
+    local normalized = lower(raw)
+    if normalized == 'ems' then return 'EMS' end
+    if normalized == 'leo' or normalized == '5pd' then return 'Police' end
+    if normalized == 'fire' then return 'Fire' end
+    if normalized == 'parkranger' or normalized == 'park_ranger' or normalized == 'park-ranger' or normalized == 'ranger' or normalized == 'parkrangers' then
+        return 'Park Ranger'
+    end
+    local pretty = raw:gsub('[_%-]+', ' ')
+    pretty = pretty:gsub('(%a)([%w_]*)', function(first, rest)
+        return string.upper(first) .. string.lower(rest or '')
+    end)
+    return pretty
+end
+
 local function jsonDecode(s)
     if not s or s == "" then return nil end
     local ok, result = pcall(function() return json.decode(s) end)
@@ -356,6 +459,57 @@ local function normalizeBooleanMap(input, defaults)
     return out
 end
 
+local function finalizeAccessIdentity(access, fallbackRole)
+    access = access or {}
+    local role = lower(trim(access.role or fallbackRole or ''))
+    local loginRole = lower(trim(access.loginRole or ''))
+
+    if access.admin then
+        role = 'admin'
+        loginRole = 'leo'
+    elseif access.dispatch then
+        if role == '' or role == 'none' or role == 'leo' then role = 'dispatch' end
+        if loginRole == '' or loginRole == 'none' then loginRole = 'dispatch' end
+    elseif access.supervisor then
+        if role == '' or role == 'none' then role = 'supervisor' end
+        if loginRole == '' or loginRole == 'none' then loginRole = 'leo' end
+    elseif access.civ and not access.open then
+        if role == '' or role == 'none' then role = 'civ' end
+        if loginRole == '' or loginRole == 'none' then loginRole = 'civ' end
+    elseif access.open or access.dmv or access.leochat then
+        if role == '' or role == 'none' then role = 'leo' end
+        if loginRole == '' or loginRole == 'none' then loginRole = 'leo' end
+    end
+
+    if role == '' or role == 'none' then role = lower(trim(fallbackRole or 'leo')) end
+    if loginRole ~= 'dispatch' and loginRole ~= 'civ' and loginRole ~= 'leo' then
+        loginRole = role == 'dispatch' and 'dispatch' or (role == 'civ' and 'civ' or 'leo')
+    end
+
+    access.role = role
+    access.loginRole = loginRole
+    access.pages = normalizeBooleanMap(access.pages, rolePageDefaults(role))
+    access.actions = normalizeBooleanMap(access.actions, roleActionDefaults(role))
+    return access
+end
+
+local function employeePermPayloadFromAccess(access, fallbackRole)
+    access = finalizeAccessIdentity(access or {}, fallbackRole)
+    return {
+        role = access.role,
+        loginRole = access.loginRole,
+        open = access.open and true or false,
+        admin = access.admin and true or false,
+        supervisor = access.supervisor and true or false,
+        dispatch = access.dispatch and true or false,
+        civ = access.civ and true or false,
+        dmv = access.dmv and true or false,
+        leochat = access.leochat and true or false,
+        pages = access.pages or rolePageDefaults(access.role),
+        actions = access.actions or roleActionDefaults(access.role)
+    }
+end
+
 local function normalizeEmployeeAccessRow(row)
     row = row or {}
     local role = lower(trim(row.mdt_role or row.role or ''))
@@ -414,7 +568,7 @@ local function normalizeEmployeeAccessRow(row)
         access.pages = normalizeBooleanMap(access.pages or rolePageDefaults('admin'), rolePageDefaults('admin'))
         access.actions = normalizeBooleanMap(access.actions or roleActionDefaults('admin'), roleActionDefaults('admin'))
     end
-    return access
+    return finalizeAccessIdentity(access, role)
 end
 
 local function applyAccessOverridesForSource(src, access, row)
@@ -439,16 +593,24 @@ local function applyAccessOverridesForSource(src, access, row)
         access.dispatch = true
         access.dmv = true
         access.leochat = true
-        access.loginRole = 'leo'
-        access.pages = normalizeBooleanMap(access.pages or rolePageDefaults('admin'), rolePageDefaults('admin'))
-        access.actions = normalizeBooleanMap(access.actions or roleActionDefaults('admin'), roleActionDefaults('admin'))
     elseif access.dispatch then
         access.open = true
         access.supervisor = true
+        access.dmv = true
+        access.leochat = true
     elseif access.supervisor then
         access.open = true
+        access.dmv = true
+        access.leochat = true
     end
-    return access
+
+    if access.civ and not access.open and not access.dispatch and not access.supervisor and not access.admin then
+        access.loginRole = 'civ'
+    elseif access.dispatch and not access.admin then
+        access.loginRole = 'dispatch'
+    end
+
+    return finalizeAccessIdentity(access, (row and (row.mdt_role or row.role)) or access.role or 'leo')
 end
 
 local function cacheSourceAccess(src, access, row)
@@ -460,20 +622,7 @@ local function cacheSourceAccess(src, access, row)
 end
 
 local function employeePermPayloadFromRow(row)
-    local access = normalizeEmployeeAccessRow(row)
-    return {
-        role = access.role,
-        loginRole = access.loginRole,
-        open = access.open and true or false,
-        admin = access.admin and true or false,
-        supervisor = access.supervisor and true or false,
-        dispatch = access.dispatch and true or false,
-        civ = access.civ and true or false,
-        dmv = access.dmv and true or false,
-        leochat = access.leochat and true or false,
-        pages = access.pages or rolePageDefaults(access.role),
-        actions = access.actions or roleActionDefaults(access.role)
-    }
+    return employeePermPayloadFromAccess(normalizeEmployeeAccessRow(row), row and (row.mdt_role or row.role) or 'leo')
 end
 
 local function fetchEmployeeRowByIdentity(ident, cb)
@@ -672,7 +821,106 @@ local function saveThemeState(payload, actorName, cb)
 end
 
 local function broadcastThemeState()
-    TriggerClientEvent('az_mdt:client:themeSettings', -1, getThemeState())
+    triggerMdtViewers('az_mdt:client:themeSettings', getThemeState())
+end
+
+local LiveMapIconState = nil
+
+local function defaultLiveMapIconState()
+    local cfg = Config.LiveMap or {}
+    local defaults = type(cfg.defaultIcons) == 'table' and cfg.defaultIcons or {}
+
+    local function build(service, fallbackClass, fallbackLabel, fallbackEmoji)
+        local row = type(defaults[service]) == 'table' and defaults[service] or {}
+        return {
+            className = trim(row.className or fallbackClass),
+            imageUrl = trim(row.imageUrl or row.url or ''),
+            label = trim(row.label or fallbackLabel),
+            emoji = trim(row.emoji or fallbackEmoji)
+        }
+    end
+
+    return {
+        police = build('police', 'fa-solid fa-car-side', 'Police', '🚓'),
+        fire   = build('fire',   'fa-solid fa-fire-truck', 'Fire', '🚒'),
+        ems    = build('ems',    'fa-solid fa-truck-medical', 'EMS', '🚑')
+    }
+end
+
+local function sanitizeLiveMapIconState(payload)
+    local defaults = defaultLiveMapIconState()
+    local output = {}
+
+    local function cleanText(value, fallback, maxLen)
+        local cleaned = trim(value or fallback or '')
+        if maxLen and #cleaned > maxLen then
+            cleaned = cleaned:sub(1, maxLen)
+        end
+        return cleaned
+    end
+
+    for service, fallback in pairs(defaults) do
+        local incoming = type(payload) == 'table' and type(payload[service]) == 'table' and payload[service] or {}
+        output[service] = {
+            className = cleanText(incoming.className, fallback.className, 96),
+            imageUrl = cleanText(incoming.imageUrl or incoming.url, fallback.imageUrl, 350000),
+            label = cleanText(incoming.label, fallback.label, 32),
+            emoji = cleanText(incoming.emoji, fallback.emoji, 16)
+        }
+    end
+
+    return output
+end
+
+local function loadLiveMapIconState()
+    if LiveMapIconState ~= nil then
+        return LiveMapIconState
+    end
+
+    local filePath = tostring(((Config.LiveMap or {}).iconStoreFile) or 'config/live_map_icons.json')
+    local raw = LoadResourceFile(RESOURCE_NAME, filePath)
+    local parsed = raw and raw ~= '' and jsonDecode(raw) or nil
+    LiveMapIconState = sanitizeLiveMapIconState(parsed)
+    return LiveMapIconState
+end
+
+local function saveLiveMapIconState(payload, cb)
+    local state = sanitizeLiveMapIconState(payload)
+    local filePath = tostring(((Config.LiveMap or {}).iconStoreFile) or 'config/live_map_icons.json')
+    SaveResourceFile(RESOURCE_NAME, filePath, jsonEncode(state), -1)
+    LiveMapIconState = state
+    if cb then cb(state) end
+end
+
+local function getLiveMapState()
+    local cfg = Config.LiveMap or {}
+    local bounds = type(cfg.bounds) == 'table' and cfg.bounds or {}
+    local rect = type(cfg.mapRect) == 'table' and cfg.mapRect or {}
+    return {
+        enabled = cfg.enabled ~= false,
+        updateIntervalMs = tonumber(cfg.updateIntervalMs) or 1750,
+        showPostalLabels = cfg.showPostalLabels == true,
+        allowCustomIcons = true,
+        mapImage = trim(cfg.mapImage or 'img/gta5-roadmap-2048.jpg'),
+        stageSize = math.max(512, tonumber(cfg.stageSize) or 2048),
+        bounds = {
+            minX = tonumber(bounds.minX) or -4200.0,
+            maxX = tonumber(bounds.maxX) or 4500.0,
+            minY = tonumber(bounds.minY) or -4500.0,
+            maxY = tonumber(bounds.maxY) or 8500.0
+        },
+        mapRect = {
+            left = tonumber(rect.left) or 289,
+            top = tonumber(rect.top) or 35,
+            right = tonumber(rect.right) or 1730,
+            bottom = tonumber(rect.bottom) or 2046
+        },
+        icons = loadLiveMapIconState()
+    }
+end
+
+local function broadcastLiveMapState()
+    triggerMdtViewers('az_mdt:client:liveMapIcons', getLiveMapState())
 end
 
 local function loadPostals()
@@ -736,6 +984,30 @@ local function loadPostals()
     dprint(('Loaded %d postal points from %s.'):format(loaded, loadedPath or configured))
 end
 
+RecentCallRoomOpen = RecentCallRoomOpen or {}
+
+function shouldEmitCallRoomOpened(src, callId, cooldownMs)
+    src = tonumber(src) or 0
+    callId = tonumber(callId) or 0
+    if src <= 0 or callId <= 0 then return false end
+    local waitMs = math.max(0, tonumber(cooldownMs) or 15000)
+    local now = GetGameTimer()
+    local key = tostring(src) .. ':' .. tostring(callId)
+    local last = tonumber(RecentCallRoomOpen[key]) or 0
+    if last > 0 and (now - last) < waitMs then
+        return false
+    end
+    RecentCallRoomOpen[key] = now
+    return true
+end
+
+function clearCallRoomOpenCooldown(src, callId)
+    src = tonumber(src) or 0
+    callId = tonumber(callId) or 0
+    if src <= 0 or callId <= 0 then return end
+    RecentCallRoomOpen[tostring(src) .. ':' .. tostring(callId)] = nil
+end
+
 local function getNearestPostal(coords)
     if type(coords) ~= 'table' or not coords.x or not coords.y or #PostalPoints == 0 then
         return nil
@@ -771,6 +1043,296 @@ local function buildPlaceholders(count)
     for i = 1, count do t[i] = "?" end
     return table.concat(t, ",")
 end
+
+
+local FrameworkSchemaCache = {}
+
+function frameworkModeEnabled()
+    return Config.Standalone == false and hasAzFramework()
+end
+
+function fwCompactPlate(value)
+    return lower(trim(tostring(value or '')):gsub('%s+', ''))
+end
+
+function frameworkColumnCacheKey(tableName, columnName)
+    return ('%s:%s'):format(tostring(tableName or ''), tostring(columnName or ''))
+end
+
+function frameworkHasColumn(tableName, columnName, cb)
+    cb = cb or function() end
+    if not frameworkModeEnabled() then
+        cb(false)
+        return
+    end
+
+    tableName = trim(tableName or '')
+    columnName = trim(columnName or '')
+    if tableName == '' or columnName == '' then
+        cb(false)
+        return
+    end
+
+    local cacheKey = frameworkColumnCacheKey(tableName, columnName)
+    if FrameworkSchemaCache[cacheKey] ~= nil then
+        cb(FrameworkSchemaCache[cacheKey] == true)
+        return
+    end
+
+    DB.fetchScalar([[SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?]], { tableName, columnName }, function(result)
+        local exists = tonumber(result or 0) > 0
+        FrameworkSchemaCache[cacheKey] = exists
+        cb(exists)
+    end)
+end
+
+function frameworkResolveColumns(tableName, columns, cb)
+    cb = cb or function() end
+    columns = columns or {}
+    if not frameworkModeEnabled() then
+        cb({})
+        return
+    end
+
+    local resolved, index = {}, 1
+    local function step()
+        if index > #columns then
+            cb(resolved)
+            return
+        end
+        local col = columns[index]
+        index = index + 1
+        frameworkHasColumn(tableName, col, function(exists)
+            resolved[col] = exists == true
+            step()
+        end)
+    end
+    step()
+end
+
+function frameworkCitizenSelectSql(cols)
+    local parts = {
+        (cols.id and 'uc.id' or 'NULL') .. ' AS id',
+        (cols.name and 'uc.name' or "''") .. ' AS name',
+        (cols.charid and 'uc.charid' or "''") .. ' AS charid',
+        (cols.discordid and 'uc.discordid' or "''") .. ' AS discordid',
+        (cols.license and 'uc.license' or "''") .. ' AS license',
+        (cols.active_department and 'uc.active_department' or "''") .. ' AS active_department',
+        (cols.license_status and 'uc.license_status' or "'valid'") .. ' AS license_status',
+        (cols.metadata and 'uc.metadata' or 'NULL') .. ' AS metadata',
+        'NULL AS mugshot',
+        (cols.created_at and 'uc.created_at' or 'NULL') .. ' AS created_at'
+    }
+    return table.concat(parts, ', ')
+end
+
+function normalizeFrameworkCitizenRows(rows)
+    rows = rows or {}
+    for _, row in ipairs(rows) do
+        row.name = trim(row.name or '')
+        row.charid = trim(row.charid or '')
+        row.discordid = trim(row.discordid or '')
+        row.license = trim(row.license or '')
+        row.active_department = trim(row.active_department or '')
+        row.license_status = trim(row.license_status or '') ~= '' and trim(row.license_status or '') or 'valid'
+        row._framework = true
+        row._mdt_source = row._mdt_source or 'framework'
+    end
+    return rows
+end
+
+function fetchFrameworkCitizensByWhere(whereSql, params, cb, limitSql)
+    cb = cb or function() end
+    if not frameworkModeEnabled() then
+        cb({})
+        return
+    end
+
+    frameworkResolveColumns('user_characters', { 'id', 'name', 'charid', 'discordid', 'license', 'active_department', 'license_status', 'metadata', 'created_at' }, function(cols)
+        if not cols.name then
+            cb({})
+            return
+        end
+
+        local query = ([[
+            SELECT
+                %s
+            FROM user_characters uc
+            WHERE %s
+            ORDER BY uc.name ASC
+            %s
+        ]]):format(frameworkCitizenSelectSql(cols), whereSql, limitSql or '')
+
+        DB.fetchAll(query, params or {}, function(rows)
+            cb(normalizeFrameworkCitizenRows(rows or {}))
+        end)
+    end)
+end
+
+function frameworkVehicleSelectSql(cols)
+    local parts = {
+        (cols.id and 'uv.id' or 'NULL') .. ' AS id',
+        (cols.plate and 'uv.plate' or "''") .. ' AS plate',
+        (cols.model and 'uv.model' or "''") .. ' AS model',
+        (cols.discordid and 'uv.discordid' or "''") .. ' AS discordid',
+        (cols.charid and 'uv.charid' or "''") .. ' AS charid',
+        (cols.owner_name and 'uv.owner_name' or "''") .. ' AS owner_name',
+        (cols.vehicle_props and 'uv.vehicle_props' or 'NULL') .. ' AS vehicle_props'
+    }
+    return table.concat(parts, ', ')
+end
+
+function normalizeFrameworkVehicleRows(rows)
+    rows = rows or {}
+    for _, row in ipairs(rows) do
+        row.plate = trim(row.plate or '')
+        row.model = trim(row.model or '')
+        row.discordid = trim(row.discordid or '')
+        row.charid = trim(row.charid or '')
+        row.owner_name = trim(row.owner_name or '')
+        row._framework = true
+        row._mdt_source = row._mdt_source or 'framework'
+        if row.vehicle_props then
+            local props = jsonDecode(row.vehicle_props)
+            if props then
+                if row.owner_name == '' and trim(props.ownerName or '') ~= '' then
+                    row.owner_name = trim(props.ownerName or '')
+                end
+                if row.model == '' and trim(props.model or '') ~= '' then
+                    row.model = trim(props.model or '')
+                end
+            end
+            row.vehicle_props = nil
+        end
+    end
+    return rows
+end
+
+function attachFrameworkVehicleOwnership(vehicleRows, cb)
+    cb = cb or function() end
+    vehicleRows = normalizeFrameworkVehicleRows(vehicleRows or {})
+    if not frameworkModeEnabled() or #vehicleRows == 0 then
+        cb(vehicleRows)
+        return
+    end
+
+    local charids, discordids = {}, {}
+    local charSeen, discordSeen = {}, {}
+    for _, row in ipairs(vehicleRows) do
+        local charid = trim(row.charid or '')
+        local discordid = trim(row.discordid or '')
+        if charid ~= '' and not charSeen[charid] then
+            charSeen[charid] = true
+            charids[#charids + 1] = charid
+        end
+        if discordid ~= '' and not discordSeen[discordid] then
+            discordSeen[discordid] = true
+            discordids[#discordids + 1] = discordid
+        end
+    end
+
+    if #charids == 0 and #discordids == 0 then
+        cb(vehicleRows)
+        return
+    end
+
+    frameworkResolveColumns('user_characters', { 'name', 'charid', 'discordid' }, function(cols)
+        if not cols.name then
+            cb(vehicleRows)
+            return
+        end
+
+        local clauses, params = {}, {}
+        if cols.charid and #charids > 0 then
+            clauses[#clauses + 1] = ('(uc.charid IN (%s))'):format(buildPlaceholders(#charids))
+            for _, value in ipairs(charids) do params[#params + 1] = value end
+        end
+        if cols.discordid and #discordids > 0 then
+            clauses[#clauses + 1] = ('(uc.discordid IN (%s))'):format(buildPlaceholders(#discordids))
+            for _, value in ipairs(discordids) do params[#params + 1] = value end
+        end
+
+        if #clauses == 0 then
+            cb(vehicleRows)
+            return
+        end
+
+        local query = ([[
+            SELECT
+                uc.name AS name,
+                %s AS charid,
+                %s AS discordid
+            FROM user_characters uc
+            WHERE %s
+        ]]):format(cols.charid and 'uc.charid' or "''", cols.discordid and 'uc.discordid' or "''", table.concat(clauses, ' OR '))
+
+        DB.fetchAll(query, params, function(ownerRows)
+            local byCharid, byDiscord = {}, {}
+            for _, row in ipairs(ownerRows or {}) do
+                local name = trim(row.name or '')
+                local charid = trim(row.charid or '')
+                local discordid = trim(row.discordid or '')
+                if name ~= '' then
+                    if charid ~= '' and byCharid[charid] == nil then
+                        byCharid[charid] = name
+                    end
+                    if discordid ~= '' then
+                        byDiscord[discordid] = byDiscord[discordid] or {}
+                        byDiscord[discordid][#byDiscord[discordid] + 1] = name
+                    end
+                end
+            end
+
+            for _, vehicle in ipairs(vehicleRows) do
+                if trim(vehicle.owner_name or '') == '' then
+                    local charid = trim(vehicle.charid or '')
+                    local discordid = trim(vehicle.discordid or '')
+                    if charid ~= '' and byCharid[charid] then
+                        vehicle.owner_name = byCharid[charid]
+                    elseif discordid ~= '' and byDiscord[discordid] and #byDiscord[discordid] == 1 then
+                        vehicle.owner_name = byDiscord[discordid][1]
+                    end
+                end
+            end
+
+            cb(vehicleRows)
+        end)
+    end)
+end
+
+function fetchFrameworkVehiclesByPlate(plate, cb)
+    cb = cb or function() end
+    if not frameworkModeEnabled() then
+        cb({})
+        return
+    end
+
+    frameworkResolveColumns('user_vehicles', { 'id', 'plate', 'model', 'discordid', 'charid', 'owner_name', 'vehicle_props' }, function(cols)
+        if not cols.plate then
+            cb({})
+            return
+        end
+
+        local rawLike = '%' .. lower(trim(plate or '')) .. '%'
+        local compactLike = '%' .. fwCompactPlate(plate) .. '%'
+        local query = ([[
+            SELECT
+                %s
+            FROM user_vehicles uv
+            WHERE REPLACE(LOWER(uv.plate), ' ', '') LIKE ?
+               OR LOWER(uv.plate) LIKE ?
+            ORDER BY uv.plate ASC
+            LIMIT 50
+        ]]):format(frameworkVehicleSelectSql(cols))
+
+        DB.fetchAll(query, { compactLike, rawLike }, function(rows)
+            attachFrameworkVehicleOwnership(rows or {}, function(attachedRows)
+                cb(attachedRows or rows or {})
+            end)
+        end)
+    end)
+end
+
 
 math.randomseed((os.time() or 0) + (GetGameTimer() or 0))
 
@@ -949,6 +1511,10 @@ local function enrichCitizenRowsWithAssets(rows, cb)
 
     local keyToRows = {}
     local keys = {}
+    local frameworkRows = {}
+    local frameworkByCharid = {}
+    local frameworkByDiscord = {}
+    local frameworkByName = {}
 
     for _, row in ipairs(rows) do
         if type(row.metadata) == 'string' then
@@ -969,14 +1535,162 @@ local function enrichCitizenRowsWithAssets(rows, cb)
                 keyToRows[key][#keyToRows[key] + 1] = row
             end
         end
+
+        if row._framework == true then
+            frameworkRows[#frameworkRows + 1] = row
+            local charid = trim(row.charid or '')
+            local discordid = trim(row.discordid or '')
+            local nameKey = lower(trim(row.name or ''))
+            if charid ~= '' then
+                frameworkByCharid[charid] = frameworkByCharid[charid] or {}
+                frameworkByCharid[charid][#frameworkByCharid[charid] + 1] = row
+            end
+            if discordid ~= '' then
+                frameworkByDiscord[discordid] = frameworkByDiscord[discordid] or {}
+                frameworkByDiscord[discordid][#frameworkByDiscord[discordid] + 1] = row
+            end
+            if nameKey ~= '' then
+                frameworkByName[nameKey] = frameworkByName[nameKey] or {}
+                frameworkByName[nameKey][#frameworkByName[nameKey] + 1] = row
+            end
+        end
     end
 
-    if #keys == 0 then
+    local function finalizeRows()
         for _, row in ipairs(rows) do
             row.vehicle_count = tonumber(row.vehicle_count) or #(row.vehicles or {})
             row.weapon_count = tonumber(row.weapon_count) or #(row.weapons or {})
+            row._vehicle_seen = nil
         end
         cb(rows)
+    end
+
+    local function attachFrameworkVehicles(done)
+        done = done or function() end
+        if not frameworkModeEnabled() or #frameworkRows == 0 then
+            done()
+            return
+        end
+
+        local charids, discordids = {}, {}
+        local charSeen, discordSeen = {}, {}
+        for _, row in ipairs(frameworkRows) do
+            local charid = trim(row.charid or '')
+            local discordid = trim(row.discordid or '')
+            if charid ~= '' and not charSeen[charid] then
+                charSeen[charid] = true
+                charids[#charids + 1] = charid
+            end
+            if discordid ~= '' and not discordSeen[discordid] then
+                discordSeen[discordid] = true
+                discordids[#discordids + 1] = discordid
+            end
+        end
+
+        frameworkResolveColumns('user_vehicles', { 'id', 'plate', 'model', 'discordid', 'charid', 'owner_name', 'vehicle_props' }, function(cols)
+            if not cols.plate then
+                done()
+                return
+            end
+
+            local clauses, params = {}, {}
+            if cols.charid and #charids > 0 then
+                clauses[#clauses + 1] = ('(uv.charid IN (%s))'):format(buildPlaceholders(#charids))
+                for _, value in ipairs(charids) do params[#params + 1] = value end
+            end
+            if cols.discordid and #discordids > 0 then
+                clauses[#clauses + 1] = ('(uv.discordid IN (%s))'):format(buildPlaceholders(#discordids))
+                for _, value in ipairs(discordids) do params[#params + 1] = value end
+            end
+            if #clauses == 0 then
+                done()
+                return
+            end
+
+            local query = ([[
+                SELECT
+                    %s
+                FROM user_vehicles uv
+                WHERE %s
+                ORDER BY uv.plate ASC
+            ]]):format(frameworkVehicleSelectSql(cols), table.concat(clauses, ' OR '))
+
+            DB.fetchAll(query, params, function(frameworkVehicleRows)
+                attachFrameworkVehicleOwnership(frameworkVehicleRows or {}, function(attachedVehicles)
+                    for _, vehicle in ipairs(attachedVehicles or {}) do
+                        local assigned = {}
+                        local ownerNameKey = lower(trim(vehicle.owner_name or ''))
+                        local charid = trim(vehicle.charid or '')
+                        local discordid = trim(vehicle.discordid or '')
+
+                        local function pushCitizen(citizen)
+                            if type(citizen) ~= 'table' then return end
+                            local citizenKey = tostring(citizen.id or citizen.charid or citizen.discordid or citizen.name or '')
+                            if citizenKey == '' or assigned[citizenKey] then return end
+                            local plateKey = compactPlate(vehicle.plate or '')
+                            citizen._vehicle_seen = citizen._vehicle_seen or {}
+                            if plateKey ~= '' and citizen._vehicle_seen[plateKey] then
+                                assigned[citizenKey] = true
+                                return
+                            end
+                            citizen.vehicles[#citizen.vehicles + 1] = {
+                                id = vehicle.id,
+                                plate = vehicle.plate,
+                                model = vehicle.model,
+                                owner_name = vehicle.owner_name,
+                                owner_identifier = vehicle.charid ~= '' and vehicle.charid or vehicle.discordid,
+                                discordid = vehicle.discordid,
+                                active = 1,
+                                _mdt_source = vehicle._mdt_source or 'framework'
+                            }
+                            if plateKey ~= '' then citizen._vehicle_seen[plateKey] = true end
+                            assigned[citizenKey] = true
+                        end
+
+                        if charid ~= '' then
+                            for _, citizen in ipairs(frameworkByCharid[charid] or {}) do pushCitizen(citizen) end
+                        end
+                        if ownerNameKey ~= '' then
+                            for _, citizen in ipairs(frameworkByName[ownerNameKey] or {}) do pushCitizen(citizen) end
+                        end
+                        if next(assigned) == nil and discordid ~= '' then
+                            local candidates = frameworkByDiscord[discordid] or {}
+                            if #candidates == 1 then
+                                pushCitizen(candidates[1])
+                            end
+                        end
+                    end
+                    done()
+                end)
+            end)
+        end)
+    end
+
+    local function fetchWeapons()
+        if #keys == 0 then
+            attachFrameworkVehicles(finalizeRows)
+            return
+        end
+        local placeholders = buildPlaceholders(#keys)
+        DB.fetchAll(([[
+            SELECT id, serial, type, owner, owner_name, owner_identifier, discordid, notes
+            FROM %s
+            WHERE owner_identifier IN (%s)
+            ORDER BY serial ASC
+        ]]):format(qTable('weapons'), placeholders), keys, function(weaponRows)
+            weaponRows = weaponRows or {}
+            for _, row in ipairs(weaponRows) do
+                local ownerKey = tostring(row.owner_identifier or '')
+                for _, citizen in ipairs(keyToRows[ownerKey] or {}) do
+                    citizen.weapons[#citizen.weapons + 1] = row
+                end
+            end
+            attachFrameworkVehicles(finalizeRows)
+        end)
+    end
+
+    if #keys == 0 then
+        fetchWeapons()
         return
     end
 
@@ -992,29 +1706,12 @@ local function enrichCitizenRowsWithAssets(rows, cb)
             local ownerKey = tostring(row.owner_identifier or '')
             for _, citizen in ipairs(keyToRows[ownerKey] or {}) do
                 citizen.vehicles[#citizen.vehicles + 1] = row
+                citizen._vehicle_seen = citizen._vehicle_seen or {}
+                local plateKey = compactPlate(row.plate or '')
+                if plateKey ~= '' then citizen._vehicle_seen[plateKey] = true end
             end
         end
-
-        DB.fetchAll(([[
-            SELECT id, serial, type, owner, owner_name, owner_identifier, discordid, notes
-            FROM %s
-            WHERE owner_identifier IN (%s)
-            ORDER BY serial ASC
-        ]]):format(qTable('weapons'), placeholders), keys, function(weaponRows)
-            weaponRows = weaponRows or {}
-            for _, row in ipairs(weaponRows) do
-                local ownerKey = tostring(row.owner_identifier or '')
-                for _, citizen in ipairs(keyToRows[ownerKey] or {}) do
-                    citizen.weapons[#citizen.weapons + 1] = row
-                end
-            end
-
-            for _, row in ipairs(rows) do
-                row.vehicle_count = tonumber(row.vehicle_count) or #(row.vehicles or {})
-                row.weapon_count = tonumber(row.weapon_count) or #(row.weapons or {})
-            end
-            cb(rows)
-        end)
+        fetchWeapons()
     end)
 end
 
@@ -1030,6 +1727,13 @@ local function getIdentifierMap(src)
 end
 
 local function getDiscordId(src)
+    if Config.Standalone == false and hasAzFramework() then
+        local fwDiscord = fwExport('getDiscordID', src)
+        if fwDiscord ~= nil and tostring(fwDiscord) ~= '' then
+            return tostring(fwDiscord)
+        end
+    end
+
     local ids = getIdentifierMap(src)
     return ids.discord
 end
@@ -1087,6 +1791,21 @@ getCharacter = function(src)
     local license = ids.license or ids.license2 or ""
     local stateCharid = resolveCharacterIdFromState(src)
     local fallbackIdentifier = ids.fivem or ids.steam or ids.discord or ("src:" .. tostring(src))
+
+    if Config.Standalone == false and hasAzFramework() then
+        local fwChar = fwExport('GetPlayerCharacter', src)
+        local fwDiscord = fwExport('getDiscordID', src)
+        local charid = trim(fwChar and tostring(fwChar) or '')
+        local discordid = trim(fwDiscord and tostring(fwDiscord) or '')
+        local identifier = charid ~= '' and charid or (license ~= '' and license or fallbackIdentifier)
+        return {
+            discordid  = discordid ~= '' and discordid or (ids.discord and tostring(ids.discord) or ''),
+            license    = tostring(license or ''),
+            identifier = tostring(identifier or ''),
+            charid     = tostring(charid ~= '' and charid or (stateCharid ~= '' and stateCharid or identifier))
+        }
+    end
+
     local charid = stateCharid ~= '' and stateCharid or (license ~= "" and license or fallbackIdentifier)
     local identifier = charid ~= '' and charid or (license ~= '' and license or fallbackIdentifier)
     return {
@@ -1105,8 +1824,19 @@ local function defaultCallsign(charid)
     return ("%s-%s"):format(Config.DefaultCallsignPrefix, suffix)
 end
 
+local function addDepartmentOption(out, seen, id, label)
+    id = trim(id)
+    label = trim(label or id)
+    if id == '' then return end
+    local key = lower(id)
+    if seen[key] then return end
+    seen[key] = true
+    out[#out + 1] = { id = id, label = label ~= '' and label or id }
+end
+
 local function getDepartmentOptions()
     local out = {}
+    local seen = {}
     local source = Config.Departments
 
     if type(source) ~= 'table' or #source == 0 then
@@ -1129,13 +1859,23 @@ local function getDepartmentOptions()
             id = trim(entry)
             label = id
         end
-        if id ~= '' then
-            out[#out + 1] = { id = id, label = label ~= '' and label or id }
-        end
+        addDepartmentOption(out, seen, id, label)
+    end
+
+    if Config.UseAzAmbulance == true then
+        addDepartmentOption(out, seen, 'ems', 'EMS')
+    end
+    if Config.UseAzFire == true then
+        addDepartmentOption(out, seen, 'fire', 'Fire')
+    end
+
+    local dispatchDept = trim(((Config.Dispatch or {}).defaultDepartment) or '')
+    if dispatchDept ~= '' then
+        addDepartmentOption(out, seen, dispatchDept, dispatchDept)
     end
 
     if #out == 0 then
-        out[#out + 1] = { id = Config.DefaultDepartment or 'police', label = Config.DefaultDepartment or 'police' }
+        addDepartmentOption(out, seen, Config.DefaultDepartment or 'police', Config.DefaultDepartment or 'police')
     end
 
     return out
@@ -1154,6 +1894,46 @@ local function sanitizeDepartmentId(value)
     return nil
 end
 
+local function configuredJobMatch(job, jobNames)
+    job = lower(trim(job or ''))
+    if job == '' or type(jobNames) ~= 'table' then return false end
+    for _, entry in ipairs(jobNames) do
+        if lower(trim(entry)) == job then
+            return true
+        end
+    end
+    for key, value in pairs(jobNames) do
+        if type(key) == 'string' and value == true and lower(trim(key)) == job then
+            return true
+        end
+    end
+    return false
+end
+
+local function resolveCurrentServiceDepartment(src, fallbackDept)
+    local job = lower(trim(getFrameworkJobName(src) or ''))
+    if job == '' then
+        return sanitizeDepartmentId(fallbackDept) or sanitizeDepartmentId(Config.DefaultDepartment) or (Config.DefaultDepartment or 'police')
+    end
+
+    if Config.UseAzAmbulance == true and configuredJobMatch(job, ((Config.AzAmbulance or {}).JobNames) or { 'ambulance', 'ems', 'doctor', 'paramedic' }) then
+        return sanitizeDepartmentId('ems') or 'ems'
+    end
+
+    if Config.UseAzFire == true and configuredJobMatch(job, ((Config.AzFire or {}).JobNames) or { 'fire', 'firefighter', 'safd' }) then
+        return sanitizeDepartmentId('fire') or 'fire'
+    end
+
+    local dept = sanitizeDepartmentId(job)
+    if dept then return dept end
+
+    if configuredJobMatch(job, ((Config.Roles or {}).leoDepartments) or {}) then
+        return sanitizeDepartmentId(job) or job
+    end
+
+    return sanitizeDepartmentId(fallbackDept) or sanitizeDepartmentId(Config.DefaultDepartment) or (Config.DefaultDepartment or 'police')
+end
+
 local function buildUiSettings()
     local tts = Config.TTS or {}
     return {
@@ -1163,7 +1943,8 @@ local function buildUiSettings()
             panicMode = tostring(tts.panicMode or 'all_onduty'),
             boloMode = tostring(tts.boloMode or 'all_onduty')
         },
-        theme = getThemeState()
+        theme = getThemeState(),
+        liveMap = getLiveMapState()
     }
 end
 
@@ -1200,7 +1981,7 @@ local function loadOfficerContext(src, cb)
     local fallbackName = GetPlayerName(src) or ("Officer " .. tostring(src))
     local fallbackCtx = {
         name          = fallbackName,
-        department    = Config.DefaultDepartment,
+        department    = resolveCurrentServiceDepartment(src, Config.DefaultDepartment),
         grade         = Config.DefaultOfficerGrade,
         callsign      = defaultCallsign(ident.charid),
         licenseStatus = "valid",
@@ -1222,8 +2003,62 @@ local function loadOfficerContext(src, cb)
         canUseCiv     = canUseCiv(src),
         canUseLeoChat = canUseLeoChat(src),
         license       = ident.license,
-        permissions   = employeePermPayloadFromRow({ mdt_role = 'leo' })
+        source        = src,
+        playerSource  = src,
+        permissions   = employeePermPayloadFromAccess(AccessCache[src] or normalizeEmployeeAccessRow({ mdt_role = 'leo' }), 'leo')
     }
+
+    if Config.Standalone == false then
+        DB.fetchAll([[
+            SELECT uc.id, uc.name, uc.charid, uc.discordid, uc.active_department, uc.license_status, ed.paycheck
+            FROM user_characters uc
+            LEFT JOIN econ_departments ed
+              ON ed.discordid = uc.discordid
+             AND ed.charid = uc.charid
+             AND ed.department = uc.active_department
+            WHERE uc.discordid = ? AND uc.charid = ?
+            LIMIT 1
+        ]], { ident.discordid, ident.charid }, function(rows)
+            local row = rows and rows[1] or nil
+            if not row then
+                cacheSourceAccess(src, normalizeEmployeeAccessRow({ mdt_role = 'leo' }), nil)
+                cb(attachUiSettings(fallbackCtx))
+                return
+            end
+
+            cacheSourceAccess(src, normalizeEmployeeAccessRow({ mdt_role = 'leo' }), nil)
+            cb(attachUiSettings({
+                id            = row.id,
+                name          = row.name or fallbackName,
+                department    = resolveCurrentServiceDepartment(src, row.active_department or Config.DefaultDepartment),
+                grade         = tonumber(row.paycheck) or Config.DefaultOfficerGrade,
+                callsign      = defaultCallsign(row.charid or ident.charid),
+                licenseStatus = row.license_status or 'valid',
+                discordid     = row.discordid or ident.discordid,
+                charid        = row.charid or ident.charid,
+                identifier    = row.charid or ident.identifier,
+                isAdmin       = canUseAdmin(src),
+                isSupervisor  = canUseSupervisor(src),
+                isDispatch    = canUseDispatch(src),
+                canManageDispatch = canManageDispatchConsole(src),
+                canClearCalls = canManageDispatchConsole(src),
+                canClearWarrants = canManageDispatchConsole(src),
+                canClearBolos = canManageDispatchConsole(src),
+                canAttachDetach = canUseOperationalMDT(src),
+                role          = canUseDispatch(src) and 'dispatch' or 'leo',
+                isLEO         = true,
+                isCiv         = false,
+                canUseDMV     = canUseDMV(src),
+                canUseCiv     = canUseCiv(src),
+                canUseLeoChat = canUseLeoChat(src),
+                license       = ident.license,
+                source        = src,
+                playerSource  = src,
+                permissions   = employeePermPayloadFromAccess(AccessCache[src] or normalizeEmployeeAccessRow({ mdt_role = canUseDispatch(src) and 'dispatch' or 'leo' }), canUseDispatch(src) and 'dispatch' or 'leo')
+            }))
+        end)
+        return
+    end
 
     DB.fetchAll(([[
         SELECT id, identifier, license, discordid, name, callsign, department, grade, active, mdt_role, mdt_perms_json
@@ -1250,7 +2085,7 @@ local function loadOfficerContext(src, cb)
         cb(attachUiSettings({
             id            = row.id,
             name          = row.name or fallbackName,
-            department    = sanitizeDepartmentId(row.department) or Config.DefaultDepartment,
+            department    = resolveCurrentServiceDepartment(src, row.department or Config.DefaultDepartment),
             grade         = tonumber(row.grade) or Config.DefaultOfficerGrade,
             callsign      = row.callsign ~= nil and tostring(row.callsign) or defaultCallsign(ident.charid),
             licenseStatus = "valid",
@@ -1272,6 +2107,8 @@ local function loadOfficerContext(src, cb)
             canUseCiv     = canUseCiv(src),
             canUseLeoChat = canUseLeoChat(src),
             license       = ident.license,
+            source        = src,
+            playerSource  = src,
             permissions   = employeePermPayloadFromRow(row)
         }))
     end)
@@ -1287,7 +2124,7 @@ local function loadDispatchContext(src, cb)
 
     local ident = getCharacter(src)
     local fallbackName = GetPlayerName(src) or ("Dispatch " .. tostring(src))
-    local fallbackDept = sanitizeDepartmentId(((Config.Dispatch or {}).defaultDepartment) or 'dispatch') or (Config.DefaultDepartment or 'police')
+    local fallbackDept = resolveCurrentServiceDepartment(src, sanitizeDepartmentId(((Config.Dispatch or {}).defaultDepartment) or 'dispatch') or (Config.DefaultDepartment or 'police'))
     local fallbackCtx = {
         name = fallbackName,
         department = fallbackDept,
@@ -1312,7 +2149,7 @@ local function loadDispatchContext(src, cb)
         canUseCiv = false,
         canUseLeoChat = true,
         license = ident.license,
-        permissions = employeePermPayloadFromRow({ mdt_role = 'dispatch' })
+        permissions = employeePermPayloadFromAccess(AccessCache[src] or normalizeEmployeeAccessRow({ mdt_role = 'dispatch' }), 'dispatch')
     }
 
     DB.fetchAll(([[
@@ -1340,7 +2177,7 @@ local function loadDispatchContext(src, cb)
         cb(attachUiSettings({
             id = row.id,
             name = row.name or fallbackName,
-            department = sanitizeDepartmentId(row.department) or fallbackDept,
+            department = resolveCurrentServiceDepartment(src, row.department or fallbackDept),
             grade = tonumber(row.grade) or Config.DefaultOfficerGrade,
             callsign = row.callsign ~= nil and tostring(row.callsign) or defaultCallsign(ident.charid),
             licenseStatus = "valid",
@@ -1401,7 +2238,7 @@ local function loadCivilianContext(src, cb)
             canUseLeoChat = false,
             metadata      = metadata or {},
             license       = ident.license,
-            permissions   = employeePermPayloadFromRow({ mdt_role = 'civ', mdt_perms_json = jsonEncode({ civ = true, loginRole = 'civ' }) })
+            permissions   = employeePermPayloadFromAccess(AccessCache[src] or normalizeEmployeeAccessRow({ mdt_role = 'civ', mdt_perms_json = jsonEncode({ civ = true, loginRole = 'civ' }) }), 'civ')
         }))
     end)
 end
@@ -1431,44 +2268,70 @@ fetchCiviliansForIdentity = function(ident, cb)
         end)
     end
 
-    if hasDistinctCharacterId(ident) then
-        DB.fetchAll(([[
-            SELECT id, name, charid, discordid, license, license_status, metadata, created_at
-            FROM %s
-            WHERE charid = ?
-            ORDER BY id DESC
-            LIMIT 100
-        ]]):format(qTable('citizens')), { ident.charid }, function(rows)
-            rows = rows or {}
-            if #rows > 0 then
-                finish(rows)
-                return
-            end
+    local function fetchFromMdtTables()
+        if hasDistinctCharacterId(ident) then
             DB.fetchAll(([[
                 SELECT id, name, charid, discordid, license, license_status, metadata, created_at
                 FROM %s
-                WHERE (
-                    (license IS NOT NULL AND license != '' AND license = ?)
-                    OR (discordid IS NOT NULL AND discordid != '' AND discordid = ?)
-                )
+                WHERE charid = ?
                 ORDER BY id DESC
                 LIMIT 100
-            ]]):format(qTable('citizens')), { ident.license, ident.discordid }, finish)
-        end)
+            ]]):format(qTable('citizens')), { ident.charid }, function(rows)
+                rows = rows or {}
+                if #rows > 0 then
+                    finish(rows)
+                    return
+                end
+                DB.fetchAll(([[
+                    SELECT id, name, charid, discordid, license, license_status, metadata, created_at
+                    FROM %s
+                    WHERE (
+                        (license IS NOT NULL AND license != '' AND license = ?)
+                        OR (discordid IS NOT NULL AND discordid != '' AND discordid = ?)
+                    )
+                    ORDER BY id DESC
+                    LIMIT 100
+                ]]):format(qTable('citizens')), { ident.license, ident.discordid }, finish)
+            end)
+            return
+        end
+
+        DB.fetchAll(([[
+            SELECT id, name, charid, discordid, license, license_status, metadata, created_at
+            FROM %s
+            WHERE (
+                (license IS NOT NULL AND license != '' AND license = ?)
+                OR (charid IS NOT NULL AND charid != '' AND charid = ?)
+                OR (discordid IS NOT NULL AND discordid != '' AND discordid = ?)
+            )
+            ORDER BY id DESC
+            LIMIT 100
+        ]]):format(qTable('citizens')), { ident.license, ident.charid, ident.discordid }, finish)
+    end
+
+    if frameworkModeEnabled() then
+        if hasDistinctCharacterId(ident) and trim(ident.charid or '') ~= '' then
+            fetchFrameworkCitizensByWhere('(uc.charid = ? OR (uc.discordid IS NOT NULL AND uc.discordid != "" AND uc.discordid = ?))', { ident.charid, ident.discordid }, function(rows)
+                if rows and #rows > 0 then
+                    finish(rows)
+                    return
+                end
+                fetchFromMdtTables()
+            end, 'LIMIT 100')
+            return
+        end
+
+        fetchFrameworkCitizensByWhere('((uc.discordid IS NOT NULL AND uc.discordid != "" AND uc.discordid = ?))', { ident.discordid }, function(rows)
+            if rows and #rows > 0 then
+                finish(rows)
+                return
+            end
+            fetchFromMdtTables()
+        end, 'LIMIT 100')
         return
     end
 
-    DB.fetchAll(([[
-        SELECT id, name, charid, discordid, license, license_status, metadata, created_at
-        FROM %s
-        WHERE (
-            (license IS NOT NULL AND license != '' AND license = ?)
-            OR (charid IS NOT NULL AND charid != '' AND charid = ?)
-            OR (discordid IS NOT NULL AND discordid != '' AND discordid = ?)
-        )
-        ORDER BY id DESC
-        LIMIT 100
-    ]]):format(qTable('citizens')), { ident.license, ident.charid, ident.discordid }, finish)
+    fetchFromMdtTables()
 end
 
 local function fetchOwnedCivilians(src, cb)
@@ -1670,11 +2533,46 @@ function sortRowsByTimestampDesc(rows, key)
 end
 
 local Calls       = {}
+local syncOperationalUnitForOpen
 local NextCallId  = 1
 
 local LeoDutyChat = {}
 local LEO_CHAT_MAX = 100
 local CallRooms = {}
+local MDTViewers = {}
+local unitsBroadcastPending = false
+local callsBroadcastPending = false
+
+local function clearMdtViewer(src)
+    src = tonumber(src) or 0
+    if src <= 0 then return end
+    MDTViewers[src] = nil
+end
+
+local function setMdtViewer(src, isOpen)
+    src = tonumber(src) or 0
+    if src <= 0 then return end
+    if isOpen == true and canUseMDT(src) then
+        MDTViewers[src] = true
+    else
+        MDTViewers[src] = nil
+    end
+end
+
+local function triggerMdtViewers(eventName, ...)
+    local args = { ... }
+    local sent = false
+    for target, _ in pairs(MDTViewers) do
+        target = tonumber(target) or 0
+        if target > 0 and GetPlayerPing(target) > 0 then
+            TriggerClientEvent(eventName, target, table.unpack(args))
+            sent = true
+        else
+            MDTViewers[target] = nil
+        end
+    end
+    return sent
+end
 
 local function pushLeoDutyChat(msg)
     LeoDutyChat[#LeoDutyChat + 1] = msg
@@ -1685,7 +2583,7 @@ end
 
 local function resetLeoDutyChat(reason)
     LeoDutyChat = {}
-    TriggerClientEvent('az_mdt:client:leoChatReset', -1, {
+    triggerMdtViewers('az_mdt:client:leoChatReset', {
         reason = reason or 'duty_changed'
     })
 end
@@ -1726,19 +2624,36 @@ local function triggerOnDutyClients(eventName, payload)
 end
 
 local function broadcastUnits()
-    local arr = {}
-    for _, u in pairs(Units) do
-        arr[#arr + 1] = u
-    end
-
-    TriggerClientEvent("az_mdt:client:unitsSnapshot", -1, {
-        units = arr
-    })
+    if unitsBroadcastPending then return end
+    unitsBroadcastPending = true
+    SetTimeout(150, function()
+        unitsBroadcastPending = false
+        local arr = {}
+        for _, u in pairs(Units) do
+            arr[#arr + 1] = u
+        end
+        triggerMdtViewers("az_mdt:client:unitsSnapshot", {
+            units = arr
+        })
+    end)
 end
 
 local function setUnitStatus(src, status, ctx)
-    status = tostring(status or "AVAILABLE")
+    status = upper(trim(status or "AVAILABLE"))
     ctx    = ctx or UnitMeta[src] or {}
+
+    local currentDepartment = sanitizeDepartmentId((ctx or {}).department or ((UnitMeta[src] or {}).department) or ((Units[src] or {}).department) or '')
+    if currentDepartment == 'fire' and status ~= 'OFFDUTY' then
+        markFireDutyHold(src, true)
+    elseif status == 'OFFDUTY' and currentDepartment == 'fire' and not sourceHasFireDutyState(src) then
+        markFireDutyHold(src, false)
+    end
+    local fireDutyProtected = Config.UseAzFire == true and currentDepartment == 'fire' and sourceHasFireDutyState(src)
+    if status == 'OFFDUTY' and fireDutyProtected then
+        status = upper(trim(((Units[src] and Units[src].status) or 'AVAILABLE')))
+        if status == '' or status == 'OFFDUTY' then status = 'AVAILABLE' end
+        dprint(('Ignoring stale OFFDUTY sync for fire unit %s while Fire duty state is still active.'):format(tostring(src)))
+    end
 
     local wasOffDuty = not Units[src] or ((Units[src].status or '') == 'OFFDUTY')
     local isOffDuty = (status == 'OFFDUTY')
@@ -1747,12 +2662,18 @@ local function setUnitStatus(src, status, ctx)
         Units[src] = nil
         UnitMeta[src] = ctx ~= nil and ctx or UnitMeta[src]
     else
+        local existing = Units[src] or {}
         local unit = {
             id         = src,
             name       = ctx.name or ("Unit " .. tostring(src)),
             department = ctx.department or "police",
             callsign   = ctx.callsign or "",
-            status     = status
+            status     = status,
+            coords     = existing.coords,
+            heading    = existing.heading,
+            inVehicle  = existing.inVehicle,
+            vehicleClass = existing.vehicleClass,
+            updatedAt  = existing.updatedAt
         }
         Units[src] = unit
         UnitMeta[src] = ctx ~= nil and ctx or UnitMeta[src]
@@ -1776,8 +2697,24 @@ local function snapshotCalls()
 end
 
 local function broadcastCalls()
-    TriggerClientEvent("az_mdt:client:callsSnapshot", -1, snapshotCalls())
+    if callsBroadcastPending then return end
+    callsBroadcastPending = true
+    SetTimeout(150, function()
+        callsBroadcastPending = false
+        triggerMdtViewers("az_mdt:client:callsSnapshot", snapshotCalls())
+    end)
 end
+
+RegisterNetEvent('az_mdt:UIState', function(isOpen)
+    local src = source
+    if isOpen == true then
+        if canUseMDT(src) then
+            setMdtViewer(src, true)
+        end
+    else
+        clearMdtViewer(src)
+    end
+end)
 
 RegisterCommand(Config.CommandName or "mdt", function(src)
     if src == 0 then
@@ -1808,10 +2745,10 @@ RegisterCommand(Config.CommandName or "mdt", function(src)
                 tostring(ctx.grade or 0)
             ))
 
-            local existingStatus = (Units[src] and Units[src].status) or (Config.Duty.defaultStatus or 'OFFDUTY')
+            local existingStatus = resolveOpenUnitStatus(src, ctx, Config.Duty.defaultStatus or 'OFFDUTY')
             ctx.status = existingStatus
             UnitMeta[src] = ctx
-            setUnitStatus(src, existingStatus, ctx)
+            ctx.status = syncOperationalUnitForOpen(src, ctx, existingStatus, ctx.department)
 
             if ctx.charid then
                 updateLastSeen(ctx.charid)
@@ -2104,6 +3041,40 @@ function compactPlate(value)
     return lower(trim(tostring(value or '')):gsub('%s+', ''))
 end
 
+local function stableAz5PDVehicleRoll(value)
+    value = compactPlate(value)
+    if value == '' then value = 'az5pd' end
+    local total = 0
+    for i = 1, #value do
+        total = (total + ((string.byte(value, i) or 0) * i)) % 2147483647
+    end
+    if total <= 0 then total = 1 end
+    return (total % 10) + 1
+end
+
+local function isAz5PDImportedVehicleRow(row)
+    row = row or {}
+    local sourceTag = lower(trim(row._mdt_source or row.source or ''))
+    if sourceTag == 'az5pd' or sourceTag == 'az5pd_external' then return true end
+
+    local idText = lower(trim(tostring(row.id or '')))
+    if idText:sub(1, 5) == 'az5pd' or idText:sub(1, 6) == 'az5pdp' then return true end
+
+    local ownerIdentifier = trim(row.owner_identifier or '')
+    local discordId = trim(row.discordid or '')
+    local policyType = lower(trim(row.policy_type or ''))
+    if ownerIdentifier == '' and discordId == '' and (policyType == 'valid' or policyType == 'legacy' or policyType == 'none' or policyType == 'suspended' or policyType == 'expire' or policyType == 'expired') then
+        return true
+    end
+
+    return false
+end
+
+local function getAz5PDInsuranceStatus(row)
+    local roll = stableAz5PDVehicleRoll((row and row.plate) or '')
+    return roll == 1 and 'INACTIVE' or 'ACTIVE'
+end
+
 function splitFullName(fullName)
     fullName = trim(fullName or '')
     if fullName == '' then return '', '' end
@@ -2135,15 +3106,16 @@ function seedAz5PDPlateContext(src, data, cb)
     local propsJson = jsonEncode({ ownerName = owner, color = color, model = model, source = 'az5pd_external' })
     local policyType = lower(status)
     if policyType == '' then policyType = 'valid' end
+    local insuranceActive = getAz5PDInsuranceStatus({ plate = plate }) == 'ACTIVE' and 1 or 0
 
     DB.execute(([=[
         INSERT INTO %s (discordid, plate, model, owner_name, policy_type, premium, deductible, active, vehicle_props)
-        VALUES (?, ?, ?, ?, ?, 0, 0, 1, ?)
+        VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
         ON DUPLICATE KEY UPDATE
             model = CASE WHEN VALUES(model) <> '' THEN VALUES(model) ELSE model END,
             owner_name = CASE WHEN VALUES(owner_name) <> '' THEN VALUES(owner_name) ELSE owner_name END,
             policy_type = CASE WHEN VALUES(policy_type) <> '' THEN VALUES(policy_type) ELSE policy_type END,
-            active = 1,
+            active = VALUES(active),
             vehicle_props = CASE WHEN VALUES(vehicle_props) <> '' THEN VALUES(vehicle_props) ELSE vehicle_props END
     ]=]):format(qTable('vehicles')), {
         '',
@@ -2151,6 +3123,7 @@ function seedAz5PDPlateContext(src, data, cb)
         model ~= '' and model or 'Unknown',
         owner,
         policyType,
+        insuranceActive,
         propsJson
     }, function()
         DB.execute(([=[
@@ -2218,20 +3191,14 @@ function mergeAz5PDLegacyPlateSearch(plate, likeTerm, vehicleRows, recordRows, c
             local statusText = trim(row.legacy_status or '')
             local existingVehicle = vehicleByPlate[plateKey]
             if existingVehicle then
+                existingVehicle._mdt_source = existingVehicle._mdt_source or 'az5pd'
                 if statusText ~= '' and (existingVehicle.registration_status == nil or trim(existingVehicle.registration_status or '') == '') then
                     existingVehicle.registration_status = statusText
                 end
-                if existingVehicle.insurance_status == nil or trim(existingVehicle.insurance_status or '') == '' then
-                    local policyType = lower(trim(existingVehicle.policy_type or ''))
-                    if policyType == 'valid' or policyType == 'active' or policyType == 'clear' or policyType == 'cleared' then
-                        existingVehicle.insurance_status = 'ACTIVE'
-                    elseif policyType == 'none' or policyType == 'noinsurance' or policyType == 'inactive' or policyType == 'invalid' or policyType == 'revoked' or policyType == 'missing' then
-                        existingVehicle.insurance_status = 'INACTIVE'
-                    elseif policyType ~= '' then
-                        existingVehicle.insurance_status = (tonumber(existingVehicle.active or 0) == 1) and 'ACTIVE' or 'INACTIVE'
-                    end
-                end
+                existingVehicle.insurance_status = getAz5PDInsuranceStatus(existingVehicle)
+                existingVehicle.active = existingVehicle.insurance_status == 'ACTIVE' and 1 or 0
             elseif plateValue ~= '' and not seenPlate[plateKey] then
+                local insuranceStatus = getAz5PDInsuranceStatus({ plate = plateValue })
                 vehicleRows[#vehicleRows + 1] = {
                     id = 'az5pdp:' .. plateValue,
                     discordid = '',
@@ -2241,10 +3208,11 @@ function mergeAz5PDLegacyPlateSearch(plate, likeTerm, vehicleRows, recordRows, c
                     policy_type = statusText ~= '' and lower(statusText) or 'legacy',
                     premium = 0,
                     deductible = 0,
-                    active = (statusText == '' or upper(statusText) == 'VALID') and 1 or 0,
+                    active = insuranceStatus == 'ACTIVE' and 1 or 0,
                     registration_status = statusText ~= '' and statusText or 'VALID',
-                    insurance_status = 'UNKNOWN',
-                    vehicle_props = nil
+                    insurance_status = insuranceStatus,
+                    vehicle_props = nil,
+                    _mdt_source = 'az5pd'
                 }
                 seenPlate[plateKey] = true
             end
@@ -2361,6 +3329,56 @@ function runPlateSearch(src, plate, data, cb)
     local rawLike = '%' .. lower(trim(plate or '')) .. '%'
     local compactLike = '%' .. compactPlate(plate) .. '%'
 
+    local function normalizeVehicleRows(vehicleRows)
+        vehicleRows = vehicleRows or {}
+        for _, row in ipairs(vehicleRows) do
+            if row.vehicle_props then
+                local props = jsonDecode(row.vehicle_props)
+                if props and props.ownerName and (not row.owner_name or row.owner_name == '') then
+                    row.owner_name = props.ownerName
+                end
+                if (not row.model or row.model == '') and props and props.model then
+                    row.model = props.model
+                end
+                if props and props.source then
+                    row._mdt_source = tostring(props.source)
+                end
+                row.vehicle_props = nil
+            end
+            if isAz5PDImportedVehicleRow(row) then
+                row.insurance_status = getAz5PDInsuranceStatus(row)
+                row.active = row.insurance_status == 'ACTIVE' and 1 or 0
+            elseif row.insurance_status == nil or trim(row.insurance_status or '') == '' then
+                local policyType = trim(row.policy_type or '')
+                if policyType ~= '' then
+                    row.insurance_status = (tonumber(row.active or 0) == 1) and 'ACTIVE' or 'INACTIVE'
+                else
+                    row.insurance_status = 'NONE'
+                end
+            end
+            if row.registration_status == nil or trim(row.registration_status or '') == '' then
+                row.registration_status = 'VALID'
+            end
+        end
+        return vehicleRows
+    end
+
+    local function finalizePlateSearch(vehicleRows)
+        vehicleRows = normalizeVehicleRows(vehicleRows)
+        DB.fetchAll([=[
+            SELECT id, target_type, target_value, rtype, title, description, creator_identifier, timestamp
+            FROM mdt_id_records
+            WHERE target_type = 'plate'
+              AND (REPLACE(LOWER(target_value), ' ', '') LIKE ? OR LOWER(target_value) LIKE ?)
+            ORDER BY timestamp DESC
+            LIMIT 100
+        ]=], { compactLike, rawLike }, function(recordRows)
+            mergeAz5PDLegacyPlateSearch(plate, compactLike, vehicleRows or {}, recordRows or {}, function(mergedVehicles, mergedRecords)
+                cb(mergedVehicles or {}, mergedRecords or {})
+            end)
+        end)
+    end
+
     DB.fetchAll(([=[
         SELECT
             id,
@@ -2380,50 +3398,75 @@ function runPlateSearch(src, plate, data, cb)
         LIMIT 50
     ]=]):format(qTable('vehicles')), { compactLike, rawLike }, function(vehicleRows)
         vehicleRows = vehicleRows or {}
-        for _, row in ipairs(vehicleRows) do
-            if row.vehicle_props then
-                local props = jsonDecode(row.vehicle_props)
-                if props and props.ownerName and (not row.owner_name or row.owner_name == '') then
-                    row.owner_name = props.ownerName
+        if frameworkModeEnabled() then
+            fetchFrameworkVehiclesByPlate(plate, function(frameworkRows)
+                local seen = {}
+                for _, row in ipairs(vehicleRows) do
+                    seen[compactPlate(row.plate or '')] = row
                 end
-                if (not row.model or row.model == '') and props and props.model then
-                    row.model = props.model
+                for _, row in ipairs(frameworkRows or {}) do
+                    local key = compactPlate(row.plate or '')
+                    local existing = seen[key]
+                    if existing then
+                        if trim(existing.owner_name or '') == '' and trim(row.owner_name or '') ~= '' then
+                            existing.owner_name = row.owner_name
+                        end
+                        if trim(existing.model or '') == '' and trim(row.model or '') ~= '' then
+                            existing.model = row.model
+                        end
+                        existing._mdt_source = existing._mdt_source or row._mdt_source or 'framework'
+                    else
+                        vehicleRows[#vehicleRows + 1] = row
+                        seen[key] = row
+                    end
                 end
-                row.vehicle_props = nil
-            end
-            if row.insurance_status == nil or trim(row.insurance_status or '') == '' then
-                local policyType = lower(trim(row.policy_type or ''))
-                if policyType == 'valid' or policyType == 'active' or policyType == 'clear' or policyType == 'cleared' then
-                    row.insurance_status = 'ACTIVE'
-                elseif policyType == 'none' or policyType == 'noinsurance' or policyType == 'inactive' or policyType == 'invalid' or policyType == 'revoked' or policyType == 'missing' then
-                    row.insurance_status = 'INACTIVE'
-                elseif policyType ~= '' then
-                    row.insurance_status = (tonumber(row.active or 0) == 1) and 'ACTIVE' or 'INACTIVE'
-                else
-                    row.insurance_status = 'NONE'
-                end
-            end
-            if row.registration_status == nil or trim(row.registration_status or '') == '' then
-                row.registration_status = 'VALID'
-            end
-        end
-
-        DB.fetchAll([=[
-            SELECT id, target_type, target_value, rtype, title, description, creator_identifier, timestamp
-            FROM mdt_id_records
-            WHERE target_type = 'plate'
-              AND (REPLACE(LOWER(target_value), ' ', '') LIKE ? OR LOWER(target_value) LIKE ?)
-            ORDER BY timestamp DESC
-            LIMIT 100
-        ]=], { compactLike, rawLike }, function(recordRows)
-            mergeAz5PDLegacyPlateSearch(plate, compactLike, vehicleRows or {}, recordRows or {}, function(mergedVehicles, mergedRecords)
-                cb(mergedVehicles or {}, mergedRecords or {})
+                finalizePlateSearch(vehicleRows)
             end)
-        end)
+            return
+        end
+        finalizePlateSearch(vehicleRows)
     end)
 end
 
 externalAz5PDNameSearchDeduper = {}
+local mdtInboundRequestLimiter = {}
+
+local function shouldThrottleInboundMdtRequest(src, bucket, query, minIntervalMs, duplicateWindowMs)
+    src = tonumber(src) or 0
+    if src <= 0 then return false end
+
+    bucket = tostring(bucket or 'generic')
+    local now = GetGameTimer()
+    local srcKey = tostring(src)
+    local bucketState = (mdtInboundRequestLimiter[srcKey] or {})[bucket]
+    local cleanQuery = lower(trim(query or ''))
+    local minInterval = tonumber(minIntervalMs) or 0
+    local duplicateWindow = tonumber(duplicateWindowMs) or minInterval
+
+    if bucketState then
+        if minInterval > 0 and (now - (bucketState.lastAt or 0)) < minInterval then
+            return true
+        end
+        if cleanQuery ~= '' and cleanQuery == (bucketState.lastQuery or '') and duplicateWindow > 0 and (now - (bucketState.lastAt or 0)) < duplicateWindow then
+            return true
+        end
+    end
+
+    local srcState = mdtInboundRequestLimiter[srcKey] or {}
+    srcState[bucket] = {
+        lastAt = now,
+        lastQuery = cleanQuery
+    }
+    mdtInboundRequestLimiter[srcKey] = srcState
+    return false
+end
+
+AddEventHandler('playerDropped', function()
+    local src = source
+    if src then
+        mdtInboundRequestLimiter[tostring(src)] = nil
+    end
+end)
 
 function shouldSkipDuplicateAz5PDNameSearch(src, term)
     local cleanTerm = lower(trim(term or ''))
@@ -2519,172 +3562,209 @@ RegisterNetEvent("az_mdt:NameSearch", function(data)
 
     local likeTerm = "%" .. lower(term) .. "%"
 
+    local function continueNameSearch(citizenRows)
+        citizenRows = citizenRows or {}
+        local citizenIds = {}
+        for _, row in ipairs(citizenRows) do
+            row.flags = row.flags or { flags = {}, notes = '' }
+            row.quick_notes = row.quick_notes or {}
+            if row.id ~= nil then
+                citizenIds[#citizenIds + 1] = tostring(row.id)
+            end
+        end
+
+        local function finishRecords()
+            DB.fetchAll([=[
+                SELECT id, target_type, target_value, rtype, title, description, creator_identifier, timestamp
+                FROM mdt_id_records
+                WHERE target_type = 'name'
+                  AND LOWER(target_value) LIKE ?
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ]=], { likeTerm }, function(recordRows)
+                recordRows = recordRows or {}
+                mergeAz5PDLegacyNameSearch(term, likeTerm, citizenRows, recordRows, function(mergedCitizens, mergedRecords)
+                    dprint(("NameSearch %d results: %d citizens, %d records"):format(
+                        src, #(mergedCitizens or {}), #(mergedRecords or {})
+                    ))
+
+                    enrichCitizenRowsWithAssets(mergedCitizens, function(enrichedRows)
+                        TriggerClientEvent("az_mdt:client:nameResults", src, {
+                            term      = term,
+                            citizens  = enrichedRows or mergedCitizens,
+                            records   = mergedRecords
+                        })
+                    end)
+                end)
+            end)
+        end
+
+        local function fetchQuickNotes()
+            local query
+            local params = {}
+            if #citizenIds > 0 then
+                query = ([=[
+                    SELECT id, target_type, target_value, note, created_at
+                    FROM mdt_quick_notes
+                    WHERE ((target_type = 'citizen' AND target_value IN (%s))
+                       OR (target_type = 'name' AND LOWER(target_value) LIKE ?))
+                    ORDER BY created_at DESC
+                ]=]):format(buildPlaceholders(#citizenIds))
+                for _, id in ipairs(citizenIds) do params[#params + 1] = id end
+                params[#params + 1] = likeTerm
+            else
+                query = [=[
+                    SELECT id, target_type, target_value, note, created_at
+                    FROM mdt_quick_notes
+                    WHERE target_type = 'name' AND LOWER(target_value) LIKE ?
+                    ORDER BY created_at DESC
+                ]=]
+                params = { likeTerm }
+            end
+
+            DB.fetchAll(query, params, function(noteRows)
+                noteRows = noteRows or {}
+                local notesByCitizen = {}
+                local notesByName = {}
+
+                for _, n in ipairs(noteRows) do
+                    local targetValue = tostring(n.target_value or '')
+                    local entry = {
+                        id = tonumber(n.id) or 0,
+                        note = n.note,
+                        created_at = n.created_at
+                    }
+
+                    if n.target_type == 'citizen' and targetValue ~= '' then
+                        notesByCitizen[targetValue] = notesByCitizen[targetValue] or {}
+                        if #notesByCitizen[targetValue] < 5 then
+                            table.insert(notesByCitizen[targetValue], entry)
+                        end
+                    elseif n.target_type == 'name' then
+                        local key = lower(targetValue)
+                        notesByName[key] = notesByName[key] or {}
+                        if #notesByName[key] < 5 then
+                            table.insert(notesByName[key], entry)
+                        end
+                    end
+                end
+
+                for _, c in ipairs(citizenRows) do
+                    local idKey = tostring(c.id or '')
+                    local nameKey = lower(c.name or '')
+                    c.quick_notes = notesByCitizen[idKey] or notesByName[nameKey] or {}
+                end
+
+                finishRecords()
+            end)
+        end
+
+        local function fetchFlags()
+            local query
+            local params = {}
+            if #citizenIds > 0 then
+                query = ([=[
+                    SELECT target_type, target_value, flags_json, notes
+                    FROM mdt_identity_flags
+                    WHERE ((target_type = 'citizen' AND target_value IN (%s))
+                       OR (target_type = 'name' AND LOWER(target_value) LIKE ?))
+                ]=]):format(buildPlaceholders(#citizenIds))
+                for _, id in ipairs(citizenIds) do params[#params + 1] = id end
+                params[#params + 1] = likeTerm
+            else
+                query = [=[
+                    SELECT target_type, target_value, flags_json, notes
+                    FROM mdt_identity_flags
+                    WHERE target_type = 'name' AND LOWER(target_value) LIKE ?
+                ]=]
+                params = { likeTerm }
+            end
+
+            DB.fetchAll(query, params, function(flagRows)
+                flagRows = flagRows or {}
+                local flagsByCitizen = {}
+                local flagsByName = {}
+
+                for _, row in ipairs(flagRows) do
+                    local key = tostring(row.target_value or '')
+                    local parsed = jsonDecode(row.flags_json or '') or {}
+                    local payload = { flags = parsed, notes = row.notes or '' }
+                    if row.target_type == 'citizen' then
+                        flagsByCitizen[key] = payload
+                    else
+                        flagsByName[lower(key)] = payload
+                    end
+                end
+
+                for _, c in ipairs(citizenRows) do
+                    local idKey = tostring(c.id or '')
+                    local nameKey = lower(c.name or '')
+                    c.flags = flagsByCitizen[idKey] or flagsByName[nameKey] or { flags = {}, notes = '' }
+                end
+
+                fetchQuickNotes()
+            end)
+        end
+
+        fetchFlags()
+    end
+
     local function runNameSearchQuery()
         dprint(("NameSearch from %d term='%s'"):format(src, term))
 
-        DB.fetchAll(([=[
-            SELECT
-                c.id,
-                c.name,
-                c.charid,
-                c.discordid,
-                c.license,
-                c.active_department,
-                c.license_status,
-                c.mugshot,
-                ls.last_seen
-            FROM %s c
-            LEFT JOIN mdt_last_seen ls
-                   ON ls.charid = c.charid
-            WHERE LOWER(c.name) LIKE ?
-            ORDER BY c.name ASC
-            LIMIT 50
-        ]=]):format(qTable('citizens')), { likeTerm }, function(citizenRows)
+        local function fetchMdtRows(done)
+            DB.fetchAll(([=[
+                SELECT
+                    c.id,
+                    c.name,
+                    c.charid,
+                    c.discordid,
+                    c.license,
+                    c.active_department,
+                    c.license_status,
+                    c.mugshot,
+                    ls.last_seen
+                FROM %s c
+                LEFT JOIN mdt_last_seen ls
+                       ON ls.charid = c.charid
+                WHERE LOWER(c.name) LIKE ?
+                ORDER BY c.name ASC
+                LIMIT 50
+            ]=]):format(qTable('citizens')), { likeTerm }, function(rows)
+                done(rows or {})
+            end)
+        end
 
-            citizenRows = citizenRows or {}
-            local citizenIds = {}
-            for _, row in ipairs(citizenRows) do
-                row.flags = { flags = {}, notes = '' }
-                row.quick_notes = {}
-                if row.id ~= nil then
-                    citizenIds[#citizenIds + 1] = tostring(row.id)
-                end
-            end
-
-            local function finishRecords()
-                DB.fetchAll([=[
-                    SELECT id, target_type, target_value, rtype, title, description, creator_identifier, timestamp
-                    FROM mdt_id_records
-                    WHERE target_type = 'name'
-                      AND LOWER(target_value) LIKE ?
-                    ORDER BY timestamp DESC
-                    LIMIT 100
-                ]=], { likeTerm }, function(recordRows)
-                    recordRows = recordRows or {}
-                    mergeAz5PDLegacyNameSearch(term, likeTerm, citizenRows, recordRows, function(mergedCitizens, mergedRecords)
-                        dprint(("NameSearch %d results: %d citizens, %d records"):format(
-                            src, #(mergedCitizens or {}), #(mergedRecords or {})
-                        ))
-
-                        enrichCitizenRowsWithAssets(mergedCitizens, function(enrichedRows)
-                            TriggerClientEvent("az_mdt:client:nameResults", src, {
-                                term      = term,
-                                citizens  = enrichedRows or mergedCitizens,
-                                records   = mergedRecords
-                            })
-                        end)
-                    end)
-                end)
-            end
-
-            local function fetchQuickNotes()
-                local query
-                local params = {}
-                if #citizenIds > 0 then
-                    query = ([=[
-                        SELECT id, target_type, target_value, note, created_at
-                        FROM mdt_quick_notes
-                        WHERE ((target_type = 'citizen' AND target_value IN (%s))
-                           OR (target_type = 'name' AND LOWER(target_value) LIKE ?))
-                        ORDER BY created_at DESC
-                    ]=]):format(buildPlaceholders(#citizenIds))
-                    for _, id in ipairs(citizenIds) do params[#params + 1] = id end
-                    params[#params + 1] = likeTerm
-                else
-                    query = [=[
-                        SELECT id, target_type, target_value, note, created_at
-                        FROM mdt_quick_notes
-                        WHERE target_type = 'name' AND LOWER(target_value) LIKE ?
-                        ORDER BY created_at DESC
-                    ]=]
-                    params = { likeTerm }
-                end
-
-                DB.fetchAll(query, params, function(noteRows)
-                    noteRows = noteRows or {}
-                    local notesByCitizen = {}
-                    local notesByName = {}
-
-                    for _, n in ipairs(noteRows) do
-                        local targetValue = tostring(n.target_value or '')
-                        local entry = {
-                            id = tonumber(n.id) or 0,
-                            note = n.note,
-                            created_at = n.created_at
-                        }
-
-                        if n.target_type == 'citizen' and targetValue ~= '' then
-                            notesByCitizen[targetValue] = notesByCitizen[targetValue] or {}
-                            if #notesByCitizen[targetValue] < 5 then
-                                table.insert(notesByCitizen[targetValue], entry)
-                            end
-                        elseif n.target_type == 'name' then
-                            local key = lower(targetValue)
-                            notesByName[key] = notesByName[key] or {}
-                            if #notesByName[key] < 5 then
-                                table.insert(notesByName[key], entry)
-                            end
+        if frameworkModeEnabled() then
+            fetchFrameworkCitizensByWhere('LOWER(uc.name) LIKE ?', { likeTerm }, function(frameworkRows)
+                fetchMdtRows(function(mdtRows)
+                    local mergedRows = {}
+                    local seen = {}
+                    for _, row in ipairs(frameworkRows or {}) do
+                        local key = lower(trim(row.name or '')) .. '|' .. trim(row.charid or '')
+                        if key ~= '|' and not seen[key] then
+                            seen[key] = true
+                            mergedRows[#mergedRows + 1] = row
                         end
                     end
-
-                    for _, c in ipairs(citizenRows) do
-                        local idKey = tostring(c.id or '')
-                        local nameKey = lower(c.name or '')
-                        c.quick_notes = notesByCitizen[idKey] or notesByName[nameKey] or {}
-                    end
-
-                    finishRecords()
-                end)
-            end
-
-            local function fetchFlags()
-                local query
-                local params = {}
-                if #citizenIds > 0 then
-                    query = ([=[
-                        SELECT target_type, target_value, flags_json, notes
-                        FROM mdt_identity_flags
-                        WHERE ((target_type = 'citizen' AND target_value IN (%s))
-                           OR (target_type = 'name' AND LOWER(target_value) LIKE ?))
-                    ]=]):format(buildPlaceholders(#citizenIds))
-                    for _, id in ipairs(citizenIds) do params[#params + 1] = id end
-                    params[#params + 1] = likeTerm
-                else
-                    query = [=[
-                        SELECT target_type, target_value, flags_json, notes
-                        FROM mdt_identity_flags
-                        WHERE target_type = 'name' AND LOWER(target_value) LIKE ?
-                    ]=]
-                    params = { likeTerm }
-                end
-
-                DB.fetchAll(query, params, function(flagRows)
-                    flagRows = flagRows or {}
-                    local flagsByCitizen = {}
-                    local flagsByName = {}
-
-                    for _, row in ipairs(flagRows) do
-                        local key = tostring(row.target_value or '')
-                        local parsed = jsonDecode(row.flags_json or '') or {}
-                        local payload = { flags = parsed, notes = row.notes or '' }
-                        if row.target_type == 'citizen' then
-                            flagsByCitizen[key] = payload
-                        else
-                            flagsByName[lower(key)] = payload
+                    for _, row in ipairs(mdtRows or {}) do
+                        local key = lower(trim(row.name or '')) .. '|' .. trim(row.charid or '')
+                        if key == '|' then
+                            key = lower(trim(row.name or '')) .. '|mdt:' .. tostring(row.id or '')
+                        end
+                        if not seen[key] then
+                            seen[key] = true
+                            mergedRows[#mergedRows + 1] = row
                         end
                     end
-
-                    for _, c in ipairs(citizenRows) do
-                        local idKey = tostring(c.id or '')
-                        local nameKey = lower(c.name or '')
-                        c.flags = flagsByCitizen[idKey] or flagsByName[nameKey] or { flags = {}, notes = '' }
-                    end
-
-                    fetchQuickNotes()
+                    continueNameSearch(mergedRows)
                 end)
-            end
+            end, 'LIMIT 50')
+            return
+        end
 
-            fetchFlags()
+        fetchMdtRows(function(rows)
+            continueNameSearch(rows)
         end)
     end
 
@@ -2733,6 +3813,10 @@ RegisterNetEvent("az_mdt:PlateSearch", function(data)
     end
 
     plate = upper(plate)
+    if shouldThrottleInboundMdtRequest(src, 'PlateSearch', plate, 250, 1200) then
+        dprint(("PlateSearch throttled from %d term='%s'"):format(src, plate))
+        return
+    end
     dprint(("PlateSearch from %d term='%s'"):format(src, plate))
 
     runPlateSearch(src, plate, data, function(mergedVehicles, mergedRecords)
@@ -2810,6 +3894,10 @@ RegisterNetEvent("az_mdt:RequestBolos", function()
         denyNoPermission(src)
         return
     end
+    if shouldThrottleInboundMdtRequest(src, 'RequestBolos', '', 900, 2000) then
+        dprint("RequestBolos throttled from", src)
+        return
+    end
     dprint("RequestBolos from", src)
 
     DB.fetchAll([[
@@ -2870,7 +3958,7 @@ RegisterNetEvent("az_mdt:CreateBolo", function(payload)
                     boloRow.body = jsonDecode(boloRow.data or '') or {}
                     boloRow.data = nil
                 end
-                TriggerClientEvent("az_mdt:client:boloList", -1, allRows)
+                triggerMdtViewers("az_mdt:client:boloList", allRows)
                 if tostring((((Config.TTS or {}).boloMode) or 'all_onduty')) ~= 'none' then
                     triggerOnDutyClients("az_mdt:client:boloAlert", row)
                 end
@@ -2894,6 +3982,10 @@ RegisterNetEvent("az_mdt:RequestReports", function()
 
     if not canUseOperationalMDT(src) then
         denyNoPermission(src)
+        return
+    end
+    if shouldThrottleInboundMdtRequest(src, 'RequestReports', '', 900, 2000) then
+        dprint("RequestReports throttled from", src)
         return
     end
     dprint("RequestReports from", src)
@@ -2956,7 +4048,7 @@ RegisterNetEvent("az_mdt:CreateReport", function(payload)
             row.body = jsonDecode(row.data) or {}
             row.data = nil
 
-            TriggerClientEvent("az_mdt:client:reportCreated", -1, row)
+            triggerMdtViewers("az_mdt:client:reportCreated", row)
 
             logAction(src, "report_create", ("Report #" .. tostring(insertId)), {
                 type        = rType,
@@ -3185,7 +4277,7 @@ RegisterNetEvent("az_mdt:AdminDeleteWarrant", function(id)
             ORDER BY id DESC
             LIMIT 200
         ]], {}, function(rows)
-            TriggerClientEvent("az_mdt:client:warrantsList", -1, rows or {})
+            triggerMdtViewers("az_mdt:client:warrantsList", rows or {})
             TriggerClientEvent("az_mdt:client:notify", src, {
                 type = "success",
                 message = ("Warrant #%s deleted."):format(tostring(id))
@@ -3266,6 +4358,44 @@ RegisterNetEvent("az_mdt:ViewEmployees", function()
 
         dprint(("ViewEmployees from %d dept=%s"):format(src, ctx.department or "NONE"))
 
+        if Config.Standalone == false then
+            local queryText
+            local params
+            if ctx.isAdmin then
+                queryText = [[
+                    SELECT uc.id, uc.name, uc.charid AS identifier, uc.charid, uc.discordid, uc.active_department, ed.paycheck AS grade, uc.license_status
+                    FROM user_characters uc
+                    LEFT JOIN econ_departments ed
+                      ON ed.discordid = uc.discordid
+                     AND ed.charid = uc.charid
+                     AND ed.department = uc.active_department
+                    ORDER BY uc.active_department ASC, uc.name ASC
+                ]]
+                params = {}
+            else
+                queryText = [[
+                    SELECT uc.id, uc.name, uc.charid AS identifier, uc.charid, uc.discordid, uc.active_department, ed.paycheck AS grade, uc.license_status
+                    FROM user_characters uc
+                    LEFT JOIN econ_departments ed
+                      ON ed.discordid = uc.discordid
+                     AND ed.charid = uc.charid
+                     AND ed.department = uc.active_department
+                    WHERE uc.active_department = ?
+                    ORDER BY uc.name ASC
+                ]]
+                params = { ctx.department }
+            end
+            DB.fetchAll(queryText, params, function(rows)
+                rows = rows or {}
+                for _, row in ipairs(rows) do
+                    row.callsign = row.callsign or defaultCallsign(row.charid or row.identifier or row.discordid or row.id)
+                    row.permissions = employeePermPayloadFromRow({ mdt_role = 'leo' })
+                end
+                TriggerClientEvent("az_mdt:client:employees", src, rows)
+            end)
+            return
+        end
+
         local queryText
         local params
         if ctx.isAdmin then
@@ -3301,6 +4431,11 @@ RegisterNetEvent("az_mdt:SaveEmployeeAccess", function(payload)
     local src = source
     if not canUseAdmin(src) then
         denyNoAdmin(src)
+        return
+    end
+
+    if Config.Standalone == false then
+        TriggerClientEvent('az_mdt:client:notify', src, { type = 'error', message = 'Employee access editing is disabled while Config.Standalone = false.' })
         return
     end
 
@@ -3387,7 +4522,7 @@ RegisterNetEvent("az_mdt:SetUnitStatus", function(status)
     dprint(("UnitStatus %d -> %s"):format(src, status))
 
     setUnitStatus(src, status, UnitMeta[src])
-    TriggerClientEvent("az_mdt:client:unitStatus", -1, src, status)
+    triggerMdtViewers("az_mdt:client:unitStatus", src, status)
 end)
 
 RegisterNetEvent("az_mdt:Panic", function(data)
@@ -3455,7 +4590,7 @@ RegisterNetEvent("az_mdt:Hospital", function()
         return
     end
     dprint("Hospital button from", src)
-    TriggerClientEvent("az_mdt:client:hospital", -1, src)
+    triggerMdtViewers("az_mdt:client:hospital", src)
 end)
 
 RegisterNetEvent("az_mdt:RequestUnits", function()
@@ -3465,6 +4600,33 @@ RegisterNetEvent("az_mdt:RequestUnits", function()
         denyNoPermission(src)
         return
     end
+
+    local currentDepartment = sanitizeDepartmentId(((UnitMeta[src] or {}).department) or resolveCurrentServiceDepartment(src, Config.DefaultDepartment))
+        or resolveCurrentServiceDepartment(src, Config.DefaultDepartment)
+        or (Config.DefaultDepartment or 'police')
+    if Config.UseAzFire == true and sourceHasFireDutyState(src) then
+        markFireDutyHold(src, true)
+        local existingStatus = upper(trim((Units[src] and Units[src].status) or ''))
+        local fireStatus = existingStatus ~= '' and existingStatus or 'AVAILABLE'
+        local fireResource = resolveFireBridgeResourceName()
+        if fireResource then
+            local ok, result = pcall(function()
+                return exports[fireResource]:GetResponderMDTStatus(src)
+            end)
+            if ok and trim(tostring(result or '')) ~= '' then
+                local candidate = upper(trim(tostring(result)))
+                if candidate ~= 'OFFDUTY' then
+                    fireStatus = candidate
+                elseif fireStatus == '' or fireStatus == 'OFFDUTY' then
+                    fireStatus = 'AVAILABLE'
+                    dprint(('Ignoring fire OFFDUTY status during RequestUnits for %s because Fire duty is still active.'):format(tostring(src)))
+                end
+            end
+        end
+        if fireStatus == '' or fireStatus == 'OFFDUTY' then fireStatus = 'AVAILABLE' end
+        ensureUnitRegisteredForOperationalSource(src, 'fire', fireStatus)
+    end
+
     local arr = {}
     for _, u in pairs(Units) do
         arr[#arr + 1] = u
@@ -3475,8 +4637,50 @@ RegisterNetEvent("az_mdt:RequestUnits", function()
     })
 end)
 
+
+
+RegisterNetEvent("az_mdt:UpdateUnitLocation", function(payload)
+    local src = source
+    if not canUseOperationalMDT(src) then return end
+    if not Units[src] then return end
+
+    payload = type(payload) == 'table' and payload or {}
+    local coords = type(payload.coords) == 'table' and payload.coords or payload
+    local x = tonumber(coords.x)
+    local y = tonumber(coords.y)
+    local z = tonumber(coords.z) or 0.0
+    if not x or not y then return end
+
+    Units[src].coords = { x = x, y = y, z = z }
+    Units[src].heading = tonumber(payload.heading) or tonumber(Units[src].heading) or 0.0
+    Units[src].inVehicle = payload.inVehicle == true
+    Units[src].vehicleClass = tonumber(payload.vehicleClass) or Units[src].vehicleClass
+    Units[src].street = trim(payload.street or Units[src].street or '')
+    Units[src].crossStreet = trim(payload.crossStreet or payload.cross_street or Units[src].crossStreet or '')
+    Units[src].locationText = trim(payload.locationText or payload.location_text or Units[src].locationText or '')
+    Units[src].updatedAt = os.time()
+    broadcastUnits()
+end)
+
+RegisterNetEvent("az_mdt:SaveLiveMapIcons", function(payload)
+    local src = source
+    if not canUseAdmin(src) then return end
+
+    loadOfficerContext(src, function(ctx)
+        saveLiveMapIconState(payload or {}, function(state)
+            broadcastLiveMapState()
+            TriggerClientEvent('az_mdt:client:notify', src, {
+                type = 'success',
+                message = 'LiveMap icons updated.'
+            })
+            logAction(src, 'live_map_icon_update', (ctx and ctx.name) or tostring(src), state or {})
+        end)
+    end)
+end)
 AddEventHandler("playerDropped", function()
     local src = source
+    clearMdtViewer(src)
+    markFireDutyHold(src, false)
     Units[src]    = nil
     UnitMeta[src] = nil
     AccessCache[src] = nil
@@ -3567,7 +4771,18 @@ local function createOfficerGeneratedCall(src, opts)
             })
             if lower(callMode) == 'all_onduty' then
                 TriggerClientEvent('az_mdt:client:newCallAlert', unitSrc, {
-                    id = id, caller = callerName, message = message, location = location, postal = postal ~= '' and postal or nil, coords = coords
+                    id = id,
+                    caller = callerName,
+                    message = message,
+                    details = details,
+                    reason = message,
+                    location = location,
+                    postal = postal ~= '' and postal or nil,
+                    coords = coords,
+                    status = call.status,
+                    type = call.type,
+                    units = call.units,
+                    created_at = call.created_at
                 })
             end
         end
@@ -3609,6 +4824,8 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
     local message    = trim(payload.message or "")
     local location   = trim(payload.location or "Unknown location")
     local coords     = payload.coords or {}
+    local requestedService = sanitizeDepartmentId(payload.department or payload.service or '')
+    local serviceLabel = prettifyServiceLabel(requestedService or '911')
     local postalInfo = getNearestPostal(coords)
     local postalCode = postalInfo and postalInfo.code or nil
 
@@ -3630,7 +4847,9 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
         coords     = coords,
         units      = {},
         status     = "PENDING",
-        created_at = os.date("%H:%M:%S")
+        created_at = os.date("%H:%M:%S"),
+        type       = requestedService and string.upper(requestedService) or nil,
+        service    = requestedService
     }
 
     Calls[id] = call
@@ -3656,7 +4875,7 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
         message = ("Your 911 call (#%d) was sent."):format(id)
     })
 
-    local officerMessage = (postalCode and postalCode ~= '' and ("New 911 call #%d @ %s (Postal %s)") or ("New 911 call #%d @ %s")):format(id, location, postalCode or '')
+    local officerMessage = (postalCode and postalCode ~= '' and ("New %s call #%d @ %s (Postal %s)") or ("New %s call #%d @ %s")):format(serviceLabel, id, location, postalCode or '')
     local callMode = tostring((((Config or {}).TTS or {}).callMode or 'all_onduty'))
     for unitSrc, unit in pairs(Units) do
         if unit and isOnDutyStatus(unit.status) and lower(callMode) == 'all_onduty' then
@@ -3664,9 +4883,19 @@ RegisterNetEvent("az_mdt:Create911", function(payload)
                 id = id,
                 caller = callerName,
                 message = message,
+                details = message,
+                reason = message,
                 location = location,
                 postal = postalCode,
-                coords = coords
+                coords = coords,
+                status = call.status,
+                type = call.type,
+                service = requestedService,
+                units = call.units,
+                created_at = call.created_at,
+                notificationType = 'call',
+                notificationTitle = ('New %s Call #%s'):format(serviceLabel, tostring(id)),
+                notificationMessage = location ~= '' and message ~= '' and ('%s • %s'):format(location, message) or (location ~= '' and location or message)
             })
         end
     end
@@ -3699,12 +4928,13 @@ RegisterNetEvent("az_mdt:AttachToCall", function(callId)
     local found = false
 
     for _, u in ipairs(call.units) do
-        if u.id == src then
+        if tonumber(u.id) == src then
             found = true
             break
         end
     end
 
+    local attachedNow = false
     if not found then
         table.insert(call.units, {
             id       = src,
@@ -3712,15 +4942,23 @@ RegisterNetEvent("az_mdt:AttachToCall", function(callId)
             callsign = ctx.callsign
         })
         DB.execute([[INSERT INTO mdt_call_units (call_id, unit_source, unit_name, unit_callsign) VALUES (?, ?, ?, ?)]], { callId, tostring(src), ctx.name or ("Unit " .. src), ctx.callsign or "" })
+        attachedNow = true
     end
 
-    call.status = "ENROUTE"
+    local statusChanged = tostring(call.status or '') ~= "ENROUTE"
+    if statusChanged then
+        call.status = "ENROUTE"
+        DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { "ENROUTE", callId })
+    end
     ensureCallRoom(callId)
-    DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { "ENROUTE", callId })
     dprint(("AttachToCall #%d by %s"):format(callId, ctx.name or src))
 
-    triggerOnDutyClients("az_mdt:client:callUpdated", call)
-    TriggerClientEvent("az_mdt:client:callRoomOpened", src, callRoomSnapshot(callId))
+    if attachedNow or statusChanged then
+        triggerOnDutyClients("az_mdt:client:callUpdated", call)
+    end
+    if attachedNow and shouldEmitCallRoomOpened(src, callId, 15000) then
+        TriggerClientEvent("az_mdt:client:callRoomOpened", src, callRoomSnapshot(callId))
+    end
 end)
 
 RegisterNetEvent("az_mdt:DetachFromCall", function(callId)
@@ -3744,7 +4982,8 @@ RegisterNetEvent("az_mdt:DetachFromCall", function(callId)
     end
 
     if removed then
-        DB.execute([[DELETE FROM mdt_call_units WHERE call_id = ? AND source_id = ?]], { callId, tostring(src) })
+        DB.execute([[DELETE FROM mdt_call_units WHERE call_id = ? AND unit_source = ?]], { callId, tostring(src) })
+        clearCallRoomOpenCooldown(src, callId)
         webSyncCallStatus(callId)
         broadcastCalls()
         TriggerClientEvent('az_mdt:client:callRoomOpened', src, callRoomSnapshot(callId))
@@ -3890,7 +5129,7 @@ RegisterNetEvent("az_mdt:LiveChatSend", function(data)
 
     pushChatMessage(payload, false)
 
-    TriggerClientEvent("az_mdt:client:liveChatMessage", -1, payload)
+    triggerMdtViewers("az_mdt:client:liveChatMessage", payload)
 end)
 
 RegisterNetEvent("az_mdt:RequestChatHistory", function()
@@ -3987,6 +5226,17 @@ RegisterNetEvent("az_mdt:SearchCivilianRegistry", function(data)
     end
     local like = ("%%%s%%"):format(term)
 
+    if frameworkModeEnabled() then
+        fetchFrameworkCitizensByWhere('(uc.name LIKE ? OR uc.charid LIKE ? OR uc.discordid LIKE ?)', { like, like, like }, function(rows)
+            rows = rows or {}
+            for _, row in ipairs(rows) do
+                row.metadata = type(row.metadata) == 'table' and row.metadata or (jsonDecode(row.metadata) or {})
+            end
+            TriggerClientEvent("az_mdt:client:civilianRegistry", src, rows)
+        end, 'LIMIT 100')
+        return
+    end
+
     DB.fetchAll(([[
         SELECT id, name, charid, discordid, license, license_status, metadata, created_at
         FROM %s
@@ -4017,6 +5267,21 @@ RegisterNetEvent("az_mdt:SearchDMV", function(data)
         return
     end
     local like = ("%%%s%%"):format(term)
+
+    if frameworkModeEnabled() then
+        fetchFrameworkCitizensByWhere('(uc.name LIKE ? OR uc.charid LIKE ? OR uc.discordid LIKE ?)', { like, like, like }, function(rows)
+            rows = rows or {}
+            enrichCitizenRowsWithAssets(rows, function(enrichedRows)
+                for _, row in ipairs(enrichedRows or rows) do
+                    row.metadata = type(row.metadata) == 'table' and row.metadata or (jsonDecode(row.metadata) or {})
+                    row.vehicle_count = tonumber(row.vehicle_count) or #((row.vehicles) or {})
+                    row.weapon_count = tonumber(row.weapon_count) or #((row.weapons) or {})
+                end
+                TriggerClientEvent("az_mdt:client:dmvResults", src, enrichedRows or rows)
+            end)
+        end, 'LIMIT 100')
+        return
+    end
 
     DB.fetchAll(([[
         SELECT c.id, c.name, c.charid, c.discordid, c.license, c.license_status, c.metadata, c.created_at
@@ -4280,7 +5545,10 @@ RegisterNetEvent("az_mdt:UpdateUnitProfile", function(data)
         Units[src].name = ctx.name
         Units[src].callsign = callsign
     else
-        setUnitStatus(src, (ctx.status or Config.Duty.defaultStatus or 'OFFDUTY'), ctx)
+        local desiredStatus = upper(trim(ctx.status or Config.Duty.defaultStatus or 'OFFDUTY'))
+        if desiredStatus ~= 'OFFDUTY' then
+            setUnitStatus(src, desiredStatus, ctx)
+        end
     end
 
     persistOfficerUnitProfile(src, ctx, function(saved)
@@ -4525,7 +5793,57 @@ RegisterNetEvent("az_mdt:SetDutyState", function(data)
 
     local onDuty = data.onDuty == true
     local status = onDuty and 'AVAILABLE' or 'OFFDUTY'
-    setUnitStatus(src, status, UnitMeta[src])
+    local ctx = UnitMeta[src] or buildFallbackOperationalContext(src, resolveCurrentServiceDepartment(src, Config.DefaultDepartment))
+    local department = sanitizeDepartmentId(data.department or '')
+        or resolveCurrentServiceDepartment(src, data.department or ctx.department or Config.DefaultDepartment)
+        or sanitizeDepartmentId(ctx.department or '')
+        or (Config.DefaultDepartment or 'police')
+    ctx.department = department
+    if trim(ctx.role or '') == '' then ctx.role = canUseDispatch(src) and 'dispatch' or 'leo' end
+    if ctx.isLEO == nil then ctx.isLEO = true end
+    UnitMeta[src] = attachUiSettings(ctx)
+
+    if department == 'fire' then
+        markFireDutyHold(src, onDuty)
+        local fireResource = resolveFireBridgeResourceName()
+        if fireResource then
+            pcall(function()
+                exports[fireResource]:SetDutyStateFromExternal(src, onDuty, true)
+            end)
+        end
+    elseif department == 'ems' then
+        local ambulanceResource = resolveAmbulanceBridgeResourceName()
+        if ambulanceResource then
+            pcall(function()
+                exports[ambulanceResource]:SetDutyStateFromExternal(src, onDuty, ctx)
+            end)
+        end
+    elseif department == 'ranger' then
+        local rangerResource = resolveParkRangerBridgeResourceName()
+        if rangerResource then
+            pcall(function()
+                exports[rangerResource]:SetDutyStateFromExternal(src, onDuty, ctx)
+            end)
+        end
+    else
+        local policeResource = resolvePoliceBridgeResourceName()
+        if policeResource then
+            pcall(function()
+                exports[policeResource]:SetDutyStateFromExternal(src, onDuty, ctx)
+            end)
+        end
+    end
+
+    setUnitStatus(src, status, ctx)
+
+    if department == 'fire' and onDuty then
+        SetTimeout(750, function()
+            if GetPlayerPing(src) > 0 and sourceHasFireDutyState(src) then
+                ensureUnitRegisteredForOperationalSource(src, 'fire', 'AVAILABLE')
+            end
+        end)
+    end
+
     TriggerClientEvent('az_mdt:client:notify', src, {
         type = 'success',
         message = onDuty and 'You are now on duty.' or 'You are now off duty.'
@@ -4567,7 +5885,7 @@ RegisterNetEvent("az_mdt:LeoChatSend", function(data)
         time = os.date('%H:%M:%S')
     }
     pushLeoDutyChat(payload)
-    TriggerClientEvent('az_mdt:client:leoChatMessage', -1, payload)
+    triggerMdtViewers('az_mdt:client:leoChatMessage', payload)
 end)
 
 RegisterNetEvent("az_mdt:RequestCallRoom", function(data)
@@ -4691,7 +6009,7 @@ RegisterNetEvent("az_mdt:AdminDeleteBolo", function(id)
                 row.body = jsonDecode(row.data) or {}
                 row.data = nil
             end
-            TriggerClientEvent("az_mdt:client:boloList", -1, rows)
+            triggerMdtViewers("az_mdt:client:boloList", rows)
         end)
     end)
 end)
@@ -4720,7 +6038,7 @@ RegisterNetEvent("az_mdt:AdminDeleteReport", function(id)
                 row.body = jsonDecode(row.data) or {}
                 row.data = nil
             end
-            TriggerClientEvent("az_mdt:client:reportList", -1, rows)
+            triggerMdtViewers("az_mdt:client:reportList", rows)
         end)
     end)
 end)
@@ -4774,7 +6092,7 @@ RegisterNetEvent("az_mdt:AdminDeleteEmployee", function(payload)
             for _, row in ipairs(rows) do
                 row.callsign = row.callsign or defaultCallsign(row.identifier or row.license or row.discordid or row.id)
             end
-            TriggerClientEvent("az_mdt:client:employees", -1, rows)
+            triggerMdtViewers("az_mdt:client:employees", rows)
         end)
     end)
 end)
@@ -4794,10 +6112,10 @@ RegisterNetEvent("az_mdt:OpenExternal", function(payload)
                 TriggerClientEvent('az_mdt:client:notify', src, { type = 'error', message = 'Unable to load your MDT profile.' })
                 return
             end
-            local existingStatus = (Units[src] and Units[src].status) or (ctx.status or Config.Duty.defaultStatus or 'OFFDUTY')
+            local existingStatus = resolveOpenUnitStatus(src, ctx, ctx.status or Config.Duty.defaultStatus or 'OFFDUTY')
             ctx.status = existingStatus
             UnitMeta[src] = ctx
-            setUnitStatus(src, existingStatus, ctx)
+            ctx.status = syncOperationalUnitForOpen(src, ctx, existingStatus, ctx.department)
             if ctx.charid then updateLastSeen(ctx.charid) end
             TriggerClientEvent('az_mdt:client:openExternal', src, ctx, payload)
             TriggerClientEvent('az_mdt:client:callsSnapshot', src, snapshotCalls())
@@ -4805,6 +6123,202 @@ RegisterNetEvent("az_mdt:OpenExternal", function(payload)
         end)
     end)
 end)
+
+local function resolveExternalBridgeResourceName(names)
+    if type(names) ~= 'table' then return nil end
+    for _, name in ipairs(names) do
+        name = trim(name or '')
+        if name ~= '' then
+            local state = GetResourceState(name)
+            if state == 'started' or state == 'starting' then
+                return name
+            end
+        end
+    end
+    return nil
+end
+
+resolveFireBridgeResourceName = function()
+    if Config.UseAzFire ~= true then return nil end
+    return resolveExternalBridgeResourceName(((Config.AzFire or {}).ResourceNames) or { 'Az-Fire', 'az_fire', 'az-fire' })
+end
+
+resolveAmbulanceBridgeResourceName = function()
+    if Config.UseAzAmbulance ~= true then return nil end
+    return resolveExternalBridgeResourceName(((Config.AzAmbulance or {}).ResourceNames) or { 'Az-Ambulance', 'az_ambulance', 'az-ambulance' })
+end
+
+resolvePoliceBridgeResourceName = function()
+    if Config.UseAz5PD ~= true then return nil end
+    return resolveExternalBridgeResourceName(((Config.Az5PD or {}).ResourceNames) or { 'Az-5PD', 'az_5pd', 'az-5pd' })
+end
+
+resolveParkRangerBridgeResourceName = function()
+    return resolveExternalBridgeResourceName(((Config.AzParkRangers or {}).ResourceNames) or { 'Az-ParkRangers', 'az_parkrangers', 'az-parkrangers', 'Az-ParkRanger', 'az_parkranger', 'az-parkranger', 'azpr' })
+end
+
+sourceHasFireDutyState = function(src)
+    if hasFireDutyHold(src) then
+        return true
+    end
+
+    local ply = Player(src)
+    if ply and ply.state and (ply.state.az_fire_onDuty == true or ply.state.az_fire_onduty == true) then
+        return true
+    end
+
+    if Config.UseAzFire == true then
+        local fireResource = resolveFireBridgeResourceName()
+        if fireResource then
+            local ok, result = pcall(function()
+                return exports[fireResource]:IsResponderOnDuty(src)
+            end)
+            if ok and result == true then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+resolveOpenUnitStatus = function(src, ctx, fallbackStatus)
+    local existingStatus = upper(trim((Units[src] and Units[src].status) or fallbackStatus or ''))
+    if existingStatus ~= '' and existingStatus ~= 'OFFDUTY' then
+        return existingStatus
+    end
+
+    local department = sanitizeDepartmentId((ctx or {}).department or ((UnitMeta[src] or {}).department) or resolveCurrentServiceDepartment(src, Config.DefaultDepartment))
+        or resolveCurrentServiceDepartment(src, Config.DefaultDepartment)
+        or (Config.DefaultDepartment or 'police')
+
+    if Config.UseAzFire == true and department == 'fire' and sourceHasFireDutyState(src) then
+        local fireStatus = existingStatus ~= '' and existingStatus ~= 'OFFDUTY' and existingStatus or 'AVAILABLE'
+        local fireResource = resolveFireBridgeResourceName()
+        if fireResource then
+            local ok, result = pcall(function()
+                return exports[fireResource]:GetResponderMDTStatus(src)
+            end)
+            if ok and trim(tostring(result or '')) ~= '' then
+                fireStatus = upper(trim(tostring(result)))
+            end
+        end
+        if fireStatus == 'OFFDUTY' then fireStatus = 'AVAILABLE' end
+        return fireStatus
+    end
+
+    return existingStatus ~= '' and existingStatus or upper(trim(Config.Duty.defaultStatus or 'OFFDUTY'))
+end
+
+
+syncOperationalUnitForOpen = function(src, ctx, desiredStatus, preferredDepartment)
+    local currentStatus = upper(trim(desiredStatus or ((Units[src] and Units[src].status) or 'OFFDUTY')))
+    if currentStatus == '' then currentStatus = 'OFFDUTY' end
+
+    if sanitizeDepartmentId((ctx or {}).department or preferredDepartment or '') == 'fire' and sourceHasFireDutyState(src) then
+        markFireDutyHold(src, true)
+        local fireStatus = resolveOpenUnitStatus(src, ctx, currentStatus)
+        if fireStatus == 'OFFDUTY' then fireStatus = 'AVAILABLE' end
+        ctx.status = fireStatus
+        ensureUnitRegisteredForOperationalSource(src, 'fire', fireStatus)
+        return fireStatus
+    end
+
+    if Units[src] then
+        setUnitStatus(src, currentStatus, ctx)
+        return currentStatus
+    end
+
+    if currentStatus ~= 'OFFDUTY' then
+        setUnitStatus(src, currentStatus, ctx)
+        return currentStatus
+    end
+
+    UnitMeta[src] = ctx
+    return currentStatus
+end
+
+local function buildFallbackOperationalContext(src, preferredDepartment)
+    local ident = getCharacter(src)
+    local existing = UnitMeta[src] or {}
+    local department = sanitizeDepartmentId(preferredDepartment or existing.department)
+        or resolveCurrentServiceDepartment(src, preferredDepartment or existing.department or Config.DefaultDepartment)
+        or (Config.DefaultDepartment or 'police')
+    local role = canUseDispatch(src) and 'dispatch' or 'leo'
+    local ctx = {
+        id = tonumber(existing.id) or src,
+        name = trim(existing.name or getOfficerDisplayLabel(src) or GetPlayerName(src) or ('Unit ' .. tostring(src))),
+        department = department,
+        grade = tonumber(existing.grade or Config.DefaultOfficerGrade) or Config.DefaultOfficerGrade,
+        callsign = trim(existing.callsign or defaultCallsign((ident and (ident.charid or ident.identifier or ident.license or ident.discordid)) or src)),
+        licenseStatus = existing.licenseStatus or 'valid',
+        discordid = existing.discordid or ident.discordid,
+        charid = existing.charid or ident.charid,
+        identifier = existing.identifier or ident.identifier,
+        isAdmin = canUseAdmin(src),
+        isSupervisor = canUseSupervisor(src),
+        isDispatch = canUseDispatch(src),
+        canManageDispatch = canManageDispatchConsole(src),
+        canClearCalls = canManageDispatchConsole(src),
+        canClearWarrants = canManageDispatchConsole(src),
+        canClearBolos = canManageDispatchConsole(src),
+        canAttachDetach = canUseOperationalMDT(src),
+        role = trim(existing.role or role) ~= '' and trim(existing.role or role) or role,
+        isLEO = existing.isLEO ~= false,
+        isCiv = false,
+        canUseDMV = canUseDMV(src),
+        canUseCiv = canUseCiv(src),
+        canUseLeoChat = canUseLeoChat(src),
+        license = existing.license or ident.license,
+        permissions = existing.permissions or employeePermPayloadFromRow({ mdt_role = role })
+    }
+    return attachUiSettings(ctx)
+end
+
+ensureUnitRegisteredForOperationalSource = function(src, preferredDepartment, status)
+    src = tonumber(src) or 0
+    if src <= 0 or not canUseOperationalMDT(src) then return false end
+    local desiredStatus = upper(trim(status or ((Units[src] and Units[src].status) or 'AVAILABLE')))
+    if desiredStatus == '' then desiredStatus = 'AVAILABLE' end
+    local ctx = UnitMeta[src] or buildFallbackOperationalContext(src, preferredDepartment)
+    local forcedDepartment = sanitizeDepartmentId(preferredDepartment or '')
+    if forcedDepartment then ctx.department = forcedDepartment end
+    if trim(ctx.role or '') == '' then ctx.role = canUseDispatch(src) and 'dispatch' or 'leo' end
+    if ctx.isLEO == nil then ctx.isLEO = true end
+    UnitMeta[src] = attachUiSettings(ctx)
+    if sanitizeDepartmentId(ctx.department or preferredDepartment or '') == 'fire' and desiredStatus ~= 'OFFDUTY' then
+        markFireDutyHold(src, true)
+    end
+    setUnitStatus(src, desiredStatus, ctx)
+    return true
+end
+
+local function resourceNameMatches(value, names)
+    value = lower(trim(value or ''))
+    if value == '' or type(names) ~= 'table' then return false end
+    for _, entry in ipairs(names) do
+        if value == lower(trim(entry or '')) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isExternalSourceEnabled(payload)
+    payload = payload or {}
+    local sourceName = trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or payload.origin or '')
+    if sourceName == '' then return true end
+    if Config.UseAzAmbulance ~= true and resourceNameMatches(sourceName, ((Config.AzAmbulance or {}).ResourceNames) or { 'Az-Ambulance', 'az_ambulance', 'az-ambulance' }) then
+        return false
+    end
+    if Config.UseAzFire ~= true and resourceNameMatches(sourceName, ((Config.AzFire or {}).ResourceNames) or { 'Az-Fire', 'az_fire', 'az-fire' }) then
+        return false
+    end
+    if Config.UseAz5PD ~= true and resourceNameMatches(sourceName, ((Config.Az5PD or {}).ResourceNames) or { 'Az-5PD', 'az_5pd', 'az-5pd' }) then
+        return false
+    end
+    return true
+end
 
 function normalizeExternalCallStatus(status)
     status = upper(trim(status or 'PENDING'))
@@ -4816,11 +6330,164 @@ function normalizeExternalCallStatus(status)
     return 'PENDING'
 end
 
+local function deriveExternalCallLocation(payload, existingCall)
+    payload = payload or {}
+    local coords = payload.coords or (existingCall and existingCall.coords) or {}
+    local street = trim(payload.street or ((payload.metadata or {}).street) or '')
+    local location = trim(payload.location or payload.address or (existingCall and existingCall.location) or '')
+    local postal = trim(payload.postal or '')
+
+    if postal == '' and type(coords) == 'table' then
+        local nearest = getNearestPostal(coords)
+        postal = nearest and trim(nearest.code or '') or ''
+    end
+
+    local normalized = lower(location)
+    if street ~= '' then
+        location = street
+    elseif normalized == '' or normalized == 'unknown address' or normalized == 'unknown location' then
+        if postal ~= '' then
+            location = ('Near Postal %s'):format(postal)
+        else
+            location = 'Unknown location'
+        end
+    end
+
+    return composeCallLocation(location, postal)
+end
+
+
+function resolveExternalCallDepartment(payload)
+    payload = payload or {}
+    local explicit = sanitizeDepartmentId(payload.department or payload.service or payload.job or ((payload.metadata or {}).department) or '')
+    if explicit and explicit ~= '' and explicit ~= 'dispatch' and explicit ~= 'civilian' then
+        return explicit
+    end
+
+    local sourceName = trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or payload.origin or '')
+    if resourceNameMatches(sourceName, ((Config.AzFire or {}).ResourceNames) or { 'Az-Fire', 'az_fire', 'az-fire' }) then
+        return sanitizeDepartmentId('fire') or 'fire'
+    end
+    if resourceNameMatches(sourceName, ((Config.AzAmbulance or {}).ResourceNames) or { 'Az-Ambulance', 'az_ambulance', 'az-ambulance' }) then
+        return sanitizeDepartmentId('ems') or 'ems'
+    end
+    if resourceNameMatches(sourceName, ((Config.Az5PD or {}).ResourceNames) or { 'Az-5PD', 'az_5pd', 'az-5pd' }) then
+        return sanitizeDepartmentId('police') or 'police'
+    end
+    if resourceNameMatches(sourceName, ((Config.AzParkRangers or {}).ResourceNames) or { 'Az-ParkRangers', 'az_parkrangers', 'az-parkrangers', 'Az-ParkRanger', 'az_parkranger', 'az-parkranger' }) then
+        return sanitizeDepartmentId('ranger') or 'ranger'
+    end
+
+    local callType = lower(trim(payload.type or payload.kind or payload.title or ''))
+    if string.find(callType, 'fire', 1, true) then return sanitizeDepartmentId('fire') or 'fire' end
+    if string.find(callType, 'ems', 1, true) or string.find(callType, 'medical', 1, true) or string.find(callType, 'ambulance', 1, true) then return sanitizeDepartmentId('ems') or 'ems' end
+    if string.find(callType, 'park ranger', 1, true) or string.find(callType, 'park_ranger', 1, true) or string.find(callType, 'parkranger', 1, true) or string.find(callType, 'ranger', 1, true) then return sanitizeDepartmentId('ranger') or 'ranger' end
+    if string.find(callType, 'police', 1, true) or string.find(callType, 'leo', 1, true) or string.find(callType, 'traffic', 1, true) then return sanitizeDepartmentId('police') or 'police' end
+
+    return nil
+end
+
+function unitMatchesCallDepartment(unitSrc, unit, targetDepartment)
+    if type(unit) ~= 'table' or not isOnDutyStatus(unit.status) then return false end
+    targetDepartment = sanitizeDepartmentId(targetDepartment or '')
+    if not targetDepartment or targetDepartment == '' then return true end
+
+    local src = tonumber(unitSrc or unit.id or 0) or 0
+    local unitDepartment = sanitizeDepartmentId(unit.department or '')
+        or sanitizeDepartmentId(((UnitMeta[tonumber(unit.id or 0)] or {}).department) or '')
+    local resolvedDepartment = src > 0 and sanitizeDepartmentId(resolveCurrentServiceDepartment(src, unitDepartment or targetDepartment)) or nil
+    local frameworkJob = lower(trim(src > 0 and (getFrameworkJobName(src) or '') or ''))
+
+    if targetDepartment == 'police' then
+        if unitDepartment == 'police' or resolvedDepartment == 'police' then
+            return true
+        end
+        if configuredJobMatch(unitDepartment or '', ((Config.Roles or {}).leoDepartments) or {}) then
+            return true
+        end
+        if configuredJobMatch(resolvedDepartment or '', ((Config.Roles or {}).leoDepartments) or {}) then
+            return true
+        end
+        if frameworkJob ~= '' and (sanitizeDepartmentId(frameworkJob) == 'police' or configuredJobMatch(frameworkJob, ((Config.Roles or {}).leoDepartments) or {})) then
+            return true
+        end
+        return false
+    end
+
+    if unitDepartment == targetDepartment or resolvedDepartment == targetDepartment then
+        return true
+    end
+
+    if frameworkJob ~= '' then
+        if targetDepartment == 'ems' and Config.UseAzAmbulance == true and configuredJobMatch(frameworkJob, ((Config.AzAmbulance or {}).JobNames) or { 'ambulance', 'ems', 'doctor', 'paramedic' }) then
+            return true
+        end
+        if targetDepartment == 'fire' and Config.UseAzFire == true and configuredJobMatch(frameworkJob, ((Config.AzFire or {}).JobNames) or { 'fire', 'firefighter', 'safd' }) then
+            return true
+        end
+        if targetDepartment == 'ranger' and configuredJobMatch(frameworkJob, ((Config.AzParkRangers or {}).JobNames) or { 'park_ranger', 'parkranger', 'ranger' }) then
+            return true
+        end
+    end
+
+    return false
+end
+
+function dispatchExternalCallAlert(call, payload)
+    if type(call) ~= 'table' then return end
+    local callMode = tostring((((Config or {}).TTS or {}).callMode or 'all_onduty'))
+    if lower(callMode) ~= 'all_onduty' then return end
+
+    payload = payload or {}
+    local targetDepartment = resolveExternalCallDepartment(payload)
+    local reason = stripDispatchTokenPrefix(call.message or payload.message or payload.details or payload.description or payload.title or call.type or 'New call')
+    local location = trim(call.location or payload.location or payload.address or 'Unknown location')
+    local sourceName = trim(call.external_source or payload.sourceResource or payload.externalResource or payload.resource or '')
+    local serviceLabel = prettifyServiceLabel(targetDepartment or trim(call.type or 'CALL'))
+
+    for unitSrc, unit in pairs(Units) do
+        if unitMatchesCallDepartment(unitSrc, unit, targetDepartment) then
+            dprint(('Dispatch alert -> src=%s dept=%s job=%s target=%s call=%s source=%s'):format(tostring(unitSrc), tostring(unit.department or ((UnitMeta[unitSrc] or {}).department) or ''), tostring(getFrameworkJobName(unitSrc) or ''), tostring(targetDepartment or ''), tostring(call.id or ''), tostring(sourceName or '')))
+            local alertPayload = {
+                id = call.id,
+                caller = call.caller,
+                message = call.message,
+                details = reason,
+                reason = reason,
+                type = call.type,
+                service = targetDepartment,
+                location = location,
+                postal = call.postal,
+                coords = call.coords,
+                notificationType = 'call',
+                notificationTitle = ('New %s Call #%s'):format(serviceLabel ~= '' and serviceLabel or 'Call', tostring(call.id or '?')),
+                notificationMessage = location ~= '' and reason ~= '' and ('%s • %s'):format(location, reason) or (location ~= '' and location or reason),
+                externalSource = sourceName,
+                quickRespond = true,
+                status = call.status,
+                units = call.units,
+                created_at = call.created_at,
+                notificationDuration = tonumber(((Config or {}).QuickRespond or {}).alertDurationMs) or 20000,
+                prompt = 'Press E to respond',
+                metadata = type(call.metadata) == 'table' and call.metadata or (type(payload.metadata) == 'table' and payload.metadata or {}),
+                sourceResource = sourceName,
+                externalResource = sourceName,
+                external_source = sourceName
+            }
+            TriggerClientEvent('az_mdt:client:newCallAlert', unitSrc, alertPayload)
+        end
+    end
+end
+
 function createExternalCallInternal(payload)
     payload = payload or {}
+    if not isExternalSourceEnabled(payload) then
+        dprint(('External call rejected from %s (bridge disabled)'):format(trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or 'unknown')))
+        return false
+    end
     local id = NextCallId
     NextCallId = NextCallId + 1
-    local location, postal = composeCallLocation(payload.location or payload.address or 'Unknown location', payload.postal or '')
+    local location, postal = deriveExternalCallLocation(payload)
     local message = trim(payload.message or payload.details or payload.description or payload.title or 'External call')
     local caller = trim(payload.caller or payload.callerName or payload.origin or payload.title or 'External Call')
     local callType = upper(trim(payload.type or payload.kind or 'EXTERNAL'))
@@ -4836,7 +6503,11 @@ function createExternalCallInternal(payload)
         type = callType,
         created_at = os.date('%H:%M:%S'),
         external = true,
-        external_source = trim(payload.sourceResource or payload.resource or '')
+        external_source = trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or payload.origin or ''),
+        metadata = type(payload.metadata) == 'table' and payload.metadata or {},
+        service = sanitizeDepartmentId(payload.department or payload.service or payload.job or ((payload.metadata or {}).department) or ''),
+        sourceResource = trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or payload.origin or ''),
+        externalResource = trim(payload.externalResource or payload.sourceResource or payload.resource or payload.source or payload.origin or '')
     }
     Calls[id] = call
     ensureCallRoom(id)
@@ -4846,6 +6517,7 @@ function createExternalCallInternal(payload)
         ON DUPLICATE KEY UPDATE caller = VALUES(caller), message = VALUES(message), location = VALUES(location), postal = VALUES(postal), coords_json = VALUES(coords_json), status = VALUES(status)
     ]], { id, call.caller, call.message, call.location, call.postal, jsonEncode(call.coords), call.status })
     triggerOnDutyClients('az_mdt:client:callUpdated', call)
+    dispatchExternalCallAlert(call, payload)
     return id
 end
 
@@ -4860,9 +6532,25 @@ exports('UpdateExternalCall', function(callId, payload)
     if not call then return false end
     if payload.caller ~= nil then call.caller = trim(payload.caller) end
     if payload.message ~= nil then call.message = trim(payload.message) end
-    if payload.location ~= nil then call.location = trim(payload.location) end
-    if payload.postal ~= nil then call.postal = trim(payload.postal) end
     if payload.coords ~= nil then call.coords = payload.coords end
+    local updatedExternalSource = trim(payload.sourceResource or payload.externalResource or payload.resource or payload.source or payload.origin or '')
+    if updatedExternalSource ~= '' then
+        call.external_source = updatedExternalSource
+        call.sourceResource = trim(payload.sourceResource or updatedExternalSource)
+        call.externalResource = trim(payload.externalResource or updatedExternalSource)
+    end
+    if type(payload.metadata) == 'table' then
+        call.metadata = payload.metadata
+    end
+    local updatedService = sanitizeDepartmentId(payload.department or payload.service or payload.job or ((payload.metadata or {}).department) or '')
+    if updatedService and updatedService ~= '' then
+        call.service = updatedService
+    end
+    if payload.location ~= nil or payload.address ~= nil or payload.postal ~= nil or payload.street ~= nil or ((payload.metadata or {}).street) ~= nil then
+        local location, postal = deriveExternalCallLocation(payload, call)
+        call.location = location
+        call.postal = postal ~= '' and postal or nil
+    end
     if payload.status ~= nil then call.status = normalizeExternalCallStatus(payload.status) end
     DB.execute([[UPDATE mdt_calls SET caller = ?, message = ?, location = ?, postal = ?, coords_json = ?, status = ? WHERE call_id = ?]], {
         call.caller, call.message, call.location, call.postal, jsonEncode(call.coords), call.status, callId
@@ -4887,28 +6575,266 @@ exports('AttachUnitToExternalCall', function(callId, src, setEnroute)
     src = tonumber(src) or 0
     local call = Calls[callId]
     if callId <= 0 or src <= 0 or not call then return false end
+
     local ctx = UnitMeta[src] or { name = getOfficerDisplayLabel(src), callsign = '' }
+    local externalSource = trim(call.external_source or '')
+    if resourceNameMatches(externalSource, ((Config.AzFire or {}).ResourceNames) or { 'Az-Fire', 'az_fire', 'az-fire' }) then
+        ctx.department = sanitizeDepartmentId('fire') or 'fire'
+    elseif resourceNameMatches(externalSource, ((Config.AzAmbulance or {}).ResourceNames) or { 'Az-Ambulance', 'az_ambulance', 'az-ambulance' }) then
+        ctx.department = sanitizeDepartmentId('ems') or 'ems'
+    elseif resourceNameMatches(externalSource, ((Config.Az5PD or {}).ResourceNames) or { 'Az-5PD', 'az_5pd', 'az-5pd' }) then
+        ctx.department = sanitizeDepartmentId('police') or 'police'
+    elseif resourceNameMatches(externalSource, ((Config.AzParkRangers or {}).ResourceNames) or { 'Az-ParkRangers', 'az_parkrangers', 'az-parkrangers', 'azpr' }) then
+        ctx.department = sanitizeDepartmentId('ranger') or 'ranger'
+    end
+    ctx.name = trim(ctx.name or getOfficerDisplayLabel(src) or ('Unit ' .. tostring(src)))
+    ctx.callsign = trim(ctx.callsign or '')
+    ctx.source = src
+    ctx.playerSource = src
+    ctx.department = sanitizeDepartmentId(ctx.department) or resolveCurrentServiceDepartment(src, ctx.department or Config.DefaultDepartment)
+    if trim(ctx.role or '') == '' then ctx.role = 'leo' end
+    if ctx.isLEO == nil then ctx.isLEO = true end
+    UnitMeta[src] = ctx
+
+    local unitStatusChanged = false
+    if setEnroute ~= false then
+        local currentUnitStatus = string.upper(tostring(((Units[src] or {}).status or '')))
+        if currentUnitStatus ~= 'ENROUTE' or not Units[src] then
+            setUnitStatus(src, 'ENROUTE', ctx)
+            unitStatusChanged = true
+        end
+    elseif not Units[src] then
+        setUnitStatus(src, 'AVAILABLE', ctx)
+        unitStatusChanged = true
+    end
+
+    local statusChanged = false
+    if setEnroute ~= false and tostring(call.status or '') ~= 'ENROUTE' then
+        call.status = 'ENROUTE'
+        DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { 'ENROUTE', callId })
+        statusChanged = true
+    end
+
     local found = false
     for _, u in ipairs(call.units) do
         if tonumber(u.id) == src then found = true break end
     end
+    local attachedNow = false
     if not found then
         table.insert(call.units, { id = src, name = ctx.name or ('Unit ' .. tostring(src)), callsign = ctx.callsign or '' })
         DB.execute([[INSERT INTO mdt_call_units (call_id, unit_source, unit_name, unit_callsign) VALUES (?, ?, ?, ?)]], { callId, tostring(src), ctx.name or ('Unit ' .. tostring(src)), ctx.callsign or '' })
+        attachedNow = true
     end
-    if setEnroute ~= false then
-        call.status = 'ENROUTE'
-        DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { 'ENROUTE', callId })
+
+    ensureCallRoom(callId)
+    if attachedNow or statusChanged or unitStatusChanged then
+        triggerOnDutyClients('az_mdt:client:callUpdated', call)
     end
+    if attachedNow and shouldEmitCallRoomOpened(src, callId, 15000) then
+        TriggerClientEvent('az_mdt:client:callRoomOpened', src, callRoomSnapshot(callId))
+    end
+    return true
+end)
+
+exports('DetachUnitFromExternalCall', function(callId, src)
+    callId = tonumber(callId) or 0
+    src = tonumber(src) or 0
+    local call = Calls[callId]
+    if callId <= 0 or src <= 0 or not call then return false end
+
+    local removed = false
+    local kept = {}
+    for _, unit in ipairs(call.units or {}) do
+        if tonumber((unit and (unit.id or unit.source or unit.sourceId))) == src then
+            removed = true
+        else
+            kept[#kept + 1] = unit
+        end
+    end
+    if not removed then return true end
+
+    call.units = kept
+    DB.execute([[DELETE FROM mdt_call_units WHERE call_id = ? AND unit_source = ?]], { callId, tostring(src) })
+    clearCallRoomOpenCooldown(src, callId)
+
+    local hasUnits = type(call.units) == 'table' and #call.units > 0
+    if not hasUnits and call.status ~= 'CLEARED' and call.status ~= 'CLOSED' then
+        call.status = 'PENDING'
+        DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { 'PENDING', callId })
+    end
+
     triggerOnDutyClients('az_mdt:client:callUpdated', call)
     return true
 end)
 
-exports('SetUnitStatusFromExternal', function(src, status, extra)
+
+local function callHasUnitAttached(call, src)
+    if type(call) ~= 'table' or type(call.units) ~= 'table' then return false end
     src = tonumber(src) or 0
     if src <= 0 then return false end
-    local ctx = UnitMeta[src] or { name = getOfficerDisplayLabel(src), callsign = '', department = Config.DefaultDepartment, grade = Config.DefaultOfficerGrade, role = 'leo', isLEO = true }
-    setUnitStatus(src, upper(trim(status or 'AVAILABLE')), ctx)
+    for _, unit in ipairs(call.units) do
+        if tonumber((unit and (unit.id or unit.source or unit.sourceId))) == src then
+            return true
+        end
+    end
+    return false
+end
+
+local function markUnitOnSceneForCallInternal(callId, src, extra)
+    callId = tonumber(callId) or 0
+    src = tonumber(src) or 0
+    extra = type(extra) == 'table' and extra or {}
+    local call = Calls[callId]
+    if callId <= 0 or src <= 0 or not call then return false, 'invalid_call' end
+    if not callHasUnitAttached(call, src) then return false, 'not_attached' end
+    if call.status == 'CLEARED' or call.status == 'CLOSED' then return false, 'closed' end
+
+    local ctx = UnitMeta[src] or { name = getOfficerDisplayLabel(src), callsign = '' }
+    setUnitStatus(src, 'ONSCENE', ctx)
+
+    if call.status ~= 'ONSCENE' then
+        call.status = 'ONSCENE'
+        DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { 'ONSCENE', callId })
+    end
+
+    triggerOnDutyClients('az_mdt:client:callUpdated', call)
+    return true
+end
+
+exports('MarkUnitOnSceneForCall', function(callId, src, extra)
+    return markUnitOnSceneForCallInternal(callId, src, extra)
+end)
+
+RegisterNetEvent('az_mdt:MarkUnitOnSceneForCall', function(callId, extra)
+    local src = source
+    if not canUseOperationalMDT(src) then return end
+    markUnitOnSceneForCallInternal(callId, src, extra)
+end)
+
+exports('SetUnitStatusFromExternal', function(src, status, extra)
+    src = tonumber(src) or 0
+    extra = type(extra) == 'table' and extra or {}
+    if src <= 0 then return false end
+    local ctx = UnitMeta[src] or buildFallbackOperationalContext(src, extra.department or Config.DefaultDepartment)
+
+    local current = Units[src]
+    local currentDepartment = sanitizeDepartmentId(((current or {}).department) or ((UnitMeta[src] or {}).department) or '')
+    local currentActive = current and isOnDutyStatus(current.status)
+    local desiredStatus = upper(trim(status or 'AVAILABLE'))
+    if desiredStatus == '' then desiredStatus = 'AVAILABLE' end
+
+    local incomingDepartment = sanitizeDepartmentId(extra.department or '')
+    if not incomingDepartment then
+        incomingDepartment = resolveCurrentServiceDepartment(src, ctx.department or Config.DefaultDepartment)
+    end
+
+    if desiredStatus == 'OFFDUTY' and extra.forceOffDuty ~= true and currentActive and incomingDepartment and currentDepartment and incomingDepartment ~= currentDepartment then
+        dprint(("Ignoring cross-department OFFDUTY status for %s incoming=%s current=%s"):format(tostring(src), tostring(incomingDepartment), tostring(currentDepartment)))
+        return true
+    end
+
+    if extra.name ~= nil and trim(extra.name) ~= '' then ctx.name = trim(extra.name) end
+    if extra.callsign ~= nil then ctx.callsign = trim(extra.callsign) end
+    ctx.source = src
+    ctx.playerSource = src
+    if extra.grade ~= nil then ctx.grade = tonumber(extra.grade) or ctx.grade end
+    ctx.department = incomingDepartment or ctx.department or Config.DefaultDepartment
+    if extra.role ~= nil and trim(extra.role) ~= '' then ctx.role = trim(extra.role) end
+    if extra.isLEO ~= nil then ctx.isLEO = extra.isLEO == true end
+    ctx = attachUiSettings(ctx)
+    UnitMeta[src] = ctx
+
+    if ctx.department == 'fire' and desiredStatus == 'OFFDUTY' and extra.forceOffDuty ~= true then
+        if sourceHasFireDutyState(src) or currentActive then
+            local preserved = resolveOpenUnitStatus(src, ctx, (current and current.status) or 'AVAILABLE')
+            if preserved == 'OFFDUTY' then preserved = 'AVAILABLE' end
+            markFireDutyHold(src, true)
+            dprint(('Ignoring unforced external fire OFFDUTY status for %s while MDT still has an active fire unit.'):format(tostring(src)))
+            ensureUnitRegisteredForOperationalSource(src, 'fire', preserved)
+            return true
+        end
+    end
+    if ctx.department == 'fire' then
+        if desiredStatus ~= 'OFFDUTY' then
+            markFireDutyHold(src, true)
+        elseif not sourceHasFireDutyState(src) then
+            markFireDutyHold(src, false)
+        end
+        if desiredStatus == 'OFFDUTY' and sourceHasFireDutyState(src) then
+            desiredStatus = resolveOpenUnitStatus(src, ctx, 'AVAILABLE')
+            if desiredStatus == 'OFFDUTY' then desiredStatus = 'AVAILABLE' end
+        end
+        if desiredStatus ~= 'OFFDUTY' then
+            ensureUnitRegisteredForOperationalSource(src, 'fire', desiredStatus)
+        else
+            setUnitStatus(src, desiredStatus, ctx)
+        end
+    else
+        setUnitStatus(src, desiredStatus, ctx)
+    end
+    return true
+end)
+
+exports('SetDutyStateFromExternal', function(src, onDuty, extra)
+    src = tonumber(src) or 0
+    extra = type(extra) == 'table' and extra or {}
+    if src <= 0 then return false end
+    local department = sanitizeDepartmentId(extra.department or '') or resolveCurrentServiceDepartment(src, extra.department or Config.DefaultDepartment) or (Config.DefaultDepartment or 'police')
+    local ctx = UnitMeta[src] or buildFallbackOperationalContext(src, department)
+
+    local current = Units[src]
+    local currentDepartment = sanitizeDepartmentId(((current or {}).department) or ((UnitMeta[src] or {}).department) or '')
+    local currentActive = current and isOnDutyStatus(current.status)
+
+    if onDuty ~= true and extra.forceOffDuty ~= true and currentActive and department and currentDepartment and department ~= currentDepartment then
+        dprint(("Ignoring cross-department duty OFFDUTY for %s incoming=%s current=%s"):format(tostring(src), tostring(department), tostring(currentDepartment)))
+        return true
+    end
+
+    if extra.name ~= nil and trim(extra.name) ~= '' then ctx.name = trim(extra.name) end
+    if extra.callsign ~= nil then ctx.callsign = trim(extra.callsign) end
+    ctx.source = src
+    ctx.playerSource = src
+    if extra.grade ~= nil then ctx.grade = tonumber(extra.grade) or ctx.grade end
+    if extra.role ~= nil and trim(extra.role) ~= '' then ctx.role = trim(extra.role) end
+    if extra.isLEO ~= nil then ctx.isLEO = extra.isLEO == true end
+    ctx.department = department
+    ctx = attachUiSettings(ctx)
+    UnitMeta[src] = ctx
+
+    local desiredStatus = onDuty == true and upper(trim(extra.status or 'AVAILABLE')) or 'OFFDUTY'
+    if desiredStatus == '' then desiredStatus = 'AVAILABLE' end
+
+    if department == 'fire' and onDuty ~= true and extra.forceOffDuty ~= true then
+        if sourceHasFireDutyState(src) or currentActive then
+            local preserved = resolveOpenUnitStatus(src, ctx, (current and current.status) or 'AVAILABLE')
+            if preserved == 'OFFDUTY' then preserved = 'AVAILABLE' end
+            markFireDutyHold(src, true)
+            dprint(('Ignoring unforced external fire OFFDUTY duty sync for %s while MDT still has an active fire unit.'):format(tostring(src)))
+            ensureUnitRegisteredForOperationalSource(src, 'fire', preserved)
+            return true
+        end
+    end
+
+    if department == 'fire' then
+        markFireDutyHold(src, onDuty == true)
+    end
+
+    if onDuty == true and department == 'fire' then
+        local fireResource = resolveFireBridgeResourceName()
+        if fireResource then
+            local ok, result = pcall(function()
+                return exports[fireResource]:GetResponderMDTStatus(src)
+            end)
+            if ok and trim(tostring(result or '')) ~= '' then
+                desiredStatus = upper(trim(tostring(result)))
+            end
+        end
+        if desiredStatus == 'OFFDUTY' then desiredStatus = 'AVAILABLE' end
+        ensureUnitRegisteredForOperationalSource(src, 'fire', desiredStatus)
+    else
+        setUnitStatus(src, desiredStatus, ctx)
+    end
     return true
 end)
 
@@ -5973,7 +7899,7 @@ local function webRowsLiveChat(cb)
 end
 
 
-local function webFetchLinkedViewer(request, cb)
+function webFetchLinkedViewer(request, cb)
     webFetchSession(request, function(session)
         if not session then
             cb(nil, nil, 'Login with Discord first.')
@@ -5989,7 +7915,7 @@ local function webFetchLinkedViewer(request, cb)
     end)
 end
 
-local function webLogAction(session, action, target, meta)
+function webLogAction(session, action, target, meta)
     local officerName = trim((session and (session.linked_name or session.global_name or session.username)) or 'Discord User')
     if officerName == '' then officerName = 'Discord User' end
     local officerDiscord = trim((session and session.discord_id) or '')
@@ -6009,15 +7935,15 @@ local function webLogAction(session, action, target, meta)
     ]], { officerName, officerDiscord, action or 'unknown', target or '', metaJson })
 end
 
-local function webCanUseLeo(viewer)
+function webCanUseLeo(viewer)
     return type(viewer) == 'table' and viewer.isLEO == true
 end
 
-local function webCanManageDispatch(viewer)
+function webCanManageDispatch(viewer)
     return webCanUseLeo(viewer) and (viewer.canManageDispatch == true or viewer.isSupervisor == true or viewer.isAdmin == true)
 end
 
-local function webUnitSourceKey(session)
+function webUnitSourceKey(session)
     local base = trim((session and (session.discord_id or session.linked_player_discord or session.linked_identifier or session.linked_license)) or '')
     if base == '' then
         base = randomToken(12)
@@ -6033,7 +7959,7 @@ webSyncCallStatus = function(callId)
     DB.execute([[UPDATE mdt_calls SET status = ? WHERE call_id = ?]], { nextStatus, callId })
 end
 
-local function webAttachSessionToCall(session, viewer, callId, cb)
+function webAttachSessionToCall(session, viewer, callId, cb)
     callId = tonumber(callId) or 0
     local call = Calls[callId]
     if callId <= 0 or not call then
@@ -6071,7 +7997,7 @@ local function webAttachSessionToCall(session, viewer, callId, cb)
     cb(true, callRoomSnapshot(callId))
 end
 
-local function webDetachSessionFromCall(session, viewer, callId, cb)
+function webDetachSessionFromCall(session, viewer, callId, cb)
     callId = tonumber(callId) or 0
     local call = Calls[callId]
     if callId <= 0 or not call then
@@ -6305,7 +8231,7 @@ if Config.Web and Config.Web.enabled then
                                     row.body = jsonDecode(row.data or '') or {}
                                     row.data = nil
                                 end
-                                TriggerClientEvent('az_mdt:client:boloList', -1, rows)
+                                triggerMdtViewers('az_mdt:client:boloList', rows)
                                 if tostring((((Config.TTS or {}).boloMode) or 'all_onduty')) ~= 'none' then
                                     DB.fetchAll([[SELECT id, type, data, created_at FROM mdt_bolos WHERE id = ? LIMIT 1]], { insertId }, function(single)
                                         local created = single and single[1] or nil
@@ -6341,7 +8267,7 @@ if Config.Web and Config.Web.enabled then
                                 if row then
                                     row.body = jsonDecode(row.data or '') or {}
                                     row.data = nil
-                                    TriggerClientEvent('az_mdt:client:reportCreated', -1, row)
+                                    triggerMdtViewers('az_mdt:client:reportCreated', row)
                                 end
                                 webLogAction(session, 'web_report_create', 'Report #' .. tostring(insertId), { type = rType, title = title, targetType = targetType, targetValue = targetValue })
                                 webJson(response, 200, { ok = true, row = row, message = ('Report #%s created.'):format(tostring(insertId)) })
@@ -6431,7 +8357,7 @@ if Config.Web and Config.Web.enabled then
                             trim(session.discord_id or '')
                         }, function(insertId)
                             DB.fetchAll([[SELECT id, target_name, target_charid, reason, status, created_by, created_discord, created_at FROM mdt_warrants ORDER BY id DESC LIMIT 200]], {}, function(rows)
-                                TriggerClientEvent('az_mdt:client:warrantsList', -1, rows or {})
+                                triggerMdtViewers('az_mdt:client:warrantsList', rows or {})
                                 webLogAction(session, 'web_warrant_create', targetName, { id = insertId, charid = targetCharid, reason = reasonText })
                                 webJson(response, 200, { ok = true, rows = rows or {}, message = ('Warrant created for %s.'):format(targetName) })
                             end)
@@ -6449,7 +8375,7 @@ if Config.Web and Config.Web.enabled then
                         end
                         local payload = { sender = viewer.callsign ~= '' and (viewer.callsign .. ' | ' .. (viewer.name or '')) or (viewer.name or 'Discord User'), source = viewer.callsign or ('web:' .. trim(session.discord_id or '')), message = msgText, time = os.date('%H:%M:%S') }
                         pushChatMessage(payload, false)
-                        TriggerClientEvent('az_mdt:client:liveChatMessage', -1, payload)
+                        triggerMdtViewers('az_mdt:client:liveChatMessage', payload)
                         webJson(response, 200, { ok = true, rows = ChatHistory or {} })
                         return
                     elseif action == 'leo-chat-send' then
@@ -6464,7 +8390,7 @@ if Config.Web and Config.Web.enabled then
                         end
                         local payload = { sender = viewer.callsign ~= '' and (viewer.callsign .. ' | ' .. (viewer.name or '')) or (viewer.name or 'Discord User'), source = viewer.callsign or ('web:' .. trim(session.discord_id or '')), message = msgText, time = os.date('%H:%M:%S') }
                         pushLeoDutyChat(payload)
-                        TriggerClientEvent('az_mdt:client:leoChatMessage', -1, payload)
+                        triggerMdtViewers('az_mdt:client:leoChatMessage', payload)
                         webJson(response, 200, { ok = true, rows = LeoDutyChat or {} })
                         return
                     elseif action == 'call-room-send' then
@@ -6616,7 +8542,7 @@ if Config.Web and Config.Web.enabled then
                                     row.body = jsonDecode(row.data or '') or {}
                                     row.data = nil
                                 end
-                                TriggerClientEvent('az_mdt:client:boloList', -1, rows)
+                                triggerMdtViewers('az_mdt:client:boloList', rows)
                                 webLogAction(session, 'web_delete_bolo', tostring(id), {})
                                 webJson(response, 200, { ok = true, rows = rows, message = ('BOLO #%s deleted.'):format(tostring(id)) })
                             end)
@@ -6639,7 +8565,7 @@ if Config.Web and Config.Web.enabled then
                                     row.body = jsonDecode(row.data or '') or {}
                                     row.data = nil
                                 end
-                                TriggerClientEvent('az_mdt:client:reportList', -1, rows)
+                                triggerMdtViewers('az_mdt:client:reportList', rows)
                                 webLogAction(session, 'web_delete_report', tostring(id), {})
                                 webJson(response, 200, { ok = true, rows = rows, message = ('Report #%s deleted.'):format(tostring(id)) })
                             end)
@@ -6657,7 +8583,7 @@ if Config.Web and Config.Web.enabled then
                         end
                         DB.execute([[DELETE FROM mdt_warrants WHERE id = ?]], { id }, function()
                             DB.fetchAll([[SELECT id, target_name, target_charid, reason, status, created_by, created_discord, created_at FROM mdt_warrants ORDER BY id DESC LIMIT 200]], {}, function(rows)
-                                TriggerClientEvent('az_mdt:client:warrantsList', -1, rows or {})
+                                triggerMdtViewers('az_mdt:client:warrantsList', rows or {})
                                 webLogAction(session, 'web_delete_warrant', tostring(id), {})
                                 webJson(response, 200, { ok = true, rows = rows or {}, message = ('Warrant #%s deleted.'):format(tostring(id)) })
                             end)
@@ -6748,6 +8674,18 @@ if Config.Web and Config.Web.enabled then
                             broadcastThemeState()
                             webLogAction(session, 'web_save_theme', (state and state.preset) or 'theme', state and state.vars or {})
                             webJson(response, 200, { ok = true, theme = state, message = ('Theme updated to %s.'):format((state and state.label) or 'custom theme') })
+                        end)
+                        return
+                    elseif action == 'save-live-map-icons' then
+                        if not (viewer and viewer.isAdmin) then
+                            webJson(response, 403, { ok = false, error = 'Website admin access required.' })
+                            return
+                        end
+                        local payload = jsonDecode(q.icons or q.payload or '') or {}
+                        saveLiveMapIconState(payload, function(state)
+                            broadcastLiveMapState()
+                            webLogAction(session, 'web_save_live_map_icons', 'live_map_icons', state or {})
+                            webJson(response, 200, { ok = true, liveMap = getLiveMapState(), message = 'LiveMap icons updated.' })
                         end)
                         return
                     end
@@ -6845,6 +8783,8 @@ if Config.Web and Config.Web.enabled then
                     webRowsCallRoom(query, function(payload) webJson(response, 200, payload) end)
                 elseif route == 'theme' then
                     webJson(response, 200, { ok = true, theme = getThemeState() })
+                elseif route == 'live-map-icons' then
+                    webJson(response, 200, { ok = true, liveMap = getLiveMapState() })
                 else
                     webJson(response, 404, { ok = false, error = 'Unknown web API route.' })
                 end
