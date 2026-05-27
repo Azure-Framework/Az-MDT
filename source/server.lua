@@ -6838,8 +6838,11 @@ exports('SetDutyStateFromExternal', function(src, onDuty, extra)
     return true
 end)
 
-AddEventHandler("onResourceStart", function(res)
-    if res ~= RESOURCE_NAME then return end
+local serverStartupDone = false
+
+local function startMdtRuntime()
+    if serverStartupDone then return end
+    serverStartupDone = true
 
     loadPostals()
 
@@ -6878,6 +6881,18 @@ AddEventHandler("onResourceStart", function(res)
         end
         dprint(("Schema ensured and live chat history loaded. Restored %d calls."):format(#rows))
     end)
+end
+
+AddEventHandler("az_mdt:schemaReady", startMdtRuntime)
+
+AddEventHandler("onResourceStart", function(res)
+    if res ~= RESOURCE_NAME then return end
+    if _G.AZ_MDT_SCHEMA_READY == true then
+        startMdtRuntime()
+        return
+    end
+
+    dprint("Waiting for MDT schema before loading live calls.")
 end)
 
 local function webUrlDecode(str)

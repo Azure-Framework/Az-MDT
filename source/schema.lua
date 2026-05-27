@@ -2,6 +2,8 @@ local RESOURCE_NAME = GetCurrentResourceName()
 
 Config = Config or {}
 if Config.Debug == nil then Config.Debug = true end
+
+_G.AZ_MDT_SCHEMA_READY = false
 Config.Tables = Config.Tables or {}
 
 local function dprint(...)
@@ -563,7 +565,9 @@ local function ensureSchema()
 
     runStatementsSequentially(schemaStatements, 1, function()
         runStatementsSequentially(schemaPatches, 1, function()
+            _G.AZ_MDT_SCHEMA_READY = true
             dprint("MDT schema ready.")
+            TriggerEvent("az_mdt:schemaReady")
         end)
     end)
 end
