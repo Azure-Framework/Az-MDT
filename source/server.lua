@@ -6838,11 +6838,11 @@ exports('SetDutyStateFromExternal', function(src, onDuty, extra)
     return true
 end)
 
-local serverStartupDone = false
+AZ_MDT_SERVER_STARTUP_DONE = AZ_MDT_SERVER_STARTUP_DONE or false
 
-local function startMdtRuntime()
-    if serverStartupDone then return end
-    serverStartupDone = true
+function AZ_MDT_START_RUNTIME()
+    if AZ_MDT_SERVER_STARTUP_DONE then return end
+    AZ_MDT_SERVER_STARTUP_DONE = true
 
     loadPostals()
 
@@ -6883,12 +6883,12 @@ local function startMdtRuntime()
     end)
 end
 
-AddEventHandler("az_mdt:schemaReady", startMdtRuntime)
+AddEventHandler("az_mdt:schemaReady", AZ_MDT_START_RUNTIME)
 
 AddEventHandler("onResourceStart", function(res)
     if res ~= RESOURCE_NAME then return end
     if _G.AZ_MDT_SCHEMA_READY == true then
-        startMdtRuntime()
+        AZ_MDT_START_RUNTIME()
         return
     end
 
