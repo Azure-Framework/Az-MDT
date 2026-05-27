@@ -6895,7 +6895,7 @@ AddEventHandler("onResourceStart", function(res)
     dprint("Waiting for MDT schema before loading live calls.")
 end)
 
-local function webUrlDecode(str)
+function webUrlDecode(str)
     str = tostring(str or '')
     str = str:gsub('+', ' ')
     str = str:gsub('%%(%x%x)', function(hex)
@@ -6904,7 +6904,7 @@ local function webUrlDecode(str)
     return str
 end
 
-local function webParsePathAndQuery(rawPath)
+function webParsePathAndQuery(rawPath)
     rawPath = tostring(rawPath or '/')
     local pathOnly, qs = rawPath:match('^([^?]*)%??(.*)$')
     pathOnly = pathOnly or '/'
@@ -6930,7 +6930,7 @@ local function webParsePathAndQuery(rawPath)
     return pathOnly, query
 end
 
-local function webResponse(response, status, body, contentType, extraHeaders)
+function webResponse(response, status, body, contentType, extraHeaders)
     local headers = {
         ['Content-Type'] = contentType or 'text/plain; charset=utf-8',
         ['Cache-Control'] = 'no-store, must-revalidate'
@@ -6942,11 +6942,11 @@ local function webResponse(response, status, body, contentType, extraHeaders)
     response.send(body or '')
 end
 
-local function webJson(response, status, payload)
+function webJson(response, status, payload)
     webResponse(response, status, jsonEncode(payload or {}), 'application/json; charset=utf-8')
 end
 
-local function webMimeType(path)
+function webMimeType(path)
     path = lower(path or '')
     if path:sub(-5) == '.html' then return 'text/html; charset=utf-8' end
     if path:sub(-4) == '.css' then return 'text/css; charset=utf-8' end
@@ -6959,7 +6959,7 @@ local function webMimeType(path)
     return 'application/octet-stream'
 end
 
-local function webCanRead(request, query)
+function webCanRead(request, query)
     if not (Config.Web and Config.Web.enabled) then
         return false, 'Web mode disabled in config.'
     end
@@ -6978,7 +6978,7 @@ local function webCanRead(request, query)
     return false, 'Missing or invalid web token.'
 end
 
-local function randomToken(len)
+function randomToken(len)
     len = tonumber(len) or 32
     local alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     local out = {}
@@ -6999,7 +6999,7 @@ randomLinkCode = function()
     return table.concat(out)
 end
 
-local function urlEncode(str)
+function urlEncode(str)
     str = tostring(str or '')
     str = str:gsub("\n", "\r\n")
     str = str:gsub('([^%w%-_%.~])', function(c)
@@ -7012,7 +7012,7 @@ webSqlNow = function(offsetSeconds)
     return os.date('%Y-%m-%d %H:%M:%S', os.time() + (tonumber(offsetSeconds) or 0))
 end
 
-local function webNormalizeSqlDateTime(value, fallback)
+function webNormalizeSqlDateTime(value, fallback)
     local fallbackValue = fallback or webSqlNow(0)
     if value == nil then
         return fallbackValue
@@ -7050,11 +7050,11 @@ local function webNormalizeSqlDateTime(value, fallback)
     return fallbackValue
 end
 
-local function webSessionTtl()
+function webSessionTtl()
     return math.max(3600, tonumber(((Config.Web or {}).sessionDurationSeconds) or 2592000) or 2592000)
 end
 
-local function webNormalizeSessionDates(session)
+function webNormalizeSessionDates(session)
     if type(session) ~= 'table' then
         return session
     end
@@ -7067,11 +7067,11 @@ local function webNormalizeSessionDates(session)
     return session
 end
 
-local function webCookieName()
+function webCookieName()
     return trim(((Config.Web or {}).sessionCookieName) or 'az_mdt_web_session')
 end
 
-local function webCookiePath()
+function webCookiePath()
     return '/' .. RESOURCE_NAME .. '/'
 end
 
@@ -7086,7 +7086,7 @@ webConfiguredBaseUrl = function()
     return raw
 end
 
-local function webGetBaseUrl(request)
+function webGetBaseUrl(request)
     local configured = webConfiguredBaseUrl()
     if configured ~= '' then
         return configured
@@ -7102,21 +7102,21 @@ local function webGetBaseUrl(request)
     return '/' .. RESOURCE_NAME .. '/'
 end
 
-local function webAbsoluteUrl(request, rel)
+function webAbsoluteUrl(request, rel)
     local base = webGetBaseUrl(request)
     rel = tostring(rel or ''):gsub('^/+', '')
     return base .. rel
 end
 
-local function webBuildCookie(value, maxAge)
+function webBuildCookie(value, maxAge)
     return ('%s=%s; Path=%s; Max-Age=%d; HttpOnly; SameSite=Lax'):format(webCookieName(), tostring(value or ''), webCookiePath(), tonumber(maxAge) or 0)
 end
 
-local function webBuildStateCookie(value)
+function webBuildStateCookie(value)
     return ('az_mdt_oauth_state=%s; Path=%s; Max-Age=600; HttpOnly; SameSite=Lax'):format(tostring(value or ''), webCookiePath())
 end
 
-local function webReadCookies(request)
+function webReadCookies(request)
     local headers = (request and request.headers) or {}
     local raw = tostring(headers['cookie'] or headers['Cookie'] or '')
     local out = {}
@@ -7129,17 +7129,17 @@ local function webReadCookies(request)
     return out
 end
 
-local function webGetSessionToken(request)
+function webGetSessionToken(request)
     local cookies = webReadCookies(request)
     return trim(cookies[webCookieName()] or '')
 end
 
-local function webGetStateToken(request)
+function webGetStateToken(request)
     local cookies = webReadCookies(request)
     return trim(cookies['az_mdt_oauth_state'] or '')
 end
 
-local function httpRequestCompat(url, method, data, headers, cb)
+function httpRequestCompat(url, method, data, headers, cb)
     method = method or 'GET'
     data = data or ''
     headers = headers or {}
@@ -7156,7 +7156,7 @@ local function httpRequestCompat(url, method, data, headers, cb)
     end, method, data, headers)
 end
 
-local function webGetOauthConfig(request)
+function webGetOauthConfig(request)
     local oauth = ((Config.Web or {}).DiscordOAuth) or {}
     local clientId = trim(oauth.clientId or oauth.appId or '')
     local clientSecret = trim(oauth.clientSecret or '')
@@ -7176,13 +7176,13 @@ local function webGetOauthConfig(request)
     }
 end
 
-local function webBuildDiscordAuthorizeUrl(request, state)
+function webBuildDiscordAuthorizeUrl(request, state)
     local oauth = webGetOauthConfig(request)
     return ('https://discord.com/oauth2/authorize?response_type=code&client_id=%s&scope=%s&redirect_uri=%s&state=%s')
         :format(urlEncode(oauth.clientId), urlEncode(oauth.scopes), urlEncode(oauth.redirectUri), urlEncode(state or ''))
 end
 
-local function webExchangeDiscordCode(request, code, cb)
+function webExchangeDiscordCode(request, code, cb)
     local oauth = webGetOauthConfig(request)
     if not oauth.enabled then
         cb(false, 'Discord OAuth is not configured in config.lua.')
@@ -7230,7 +7230,7 @@ local function webExchangeDiscordCode(request, code, cb)
     end)
 end
 
-local function webFetchDiscordLink(discordId, cb)
+function webFetchDiscordLink(discordId, cb)
     discordId = trim(discordId or '')
     if discordId == '' then
         cb(nil)
@@ -7247,7 +7247,7 @@ local function webFetchDiscordLink(discordId, cb)
     end)
 end
 
-local function webPersistSession(session, cb)
+function webPersistSession(session, cb)
     cb = cb or function() end
     session = webNormalizeSessionDates(session or {})
 
@@ -7292,7 +7292,7 @@ local function webPersistSession(session, cb)
     end)
 end
 
-local function webCreateSessionForDiscordUser(discordUser, cb)
+function webCreateSessionForDiscordUser(discordUser, cb)
     local discordId = trim((discordUser or {}).id or '')
     if discordId == '' then
         cb(nil)
@@ -7322,7 +7322,7 @@ local function webCreateSessionForDiscordUser(discordUser, cb)
     end)
 end
 
-local function webFetchSession(request, cb)
+function webFetchSession(request, cb)
     local sessionId = webGetSessionToken(request)
     if sessionId == '' then
         cb(nil)
@@ -7363,7 +7363,7 @@ end)
     end)
 end
 
-local function webSessionIsLinked(session)
+function webSessionIsLinked(session)
     if type(session) ~= 'table' then return false end
     return trim(session.linked_identifier or '') ~= ''
         or trim(session.linked_license or '') ~= ''
@@ -7371,7 +7371,7 @@ local function webSessionIsLinked(session)
         or trim(session.linked_role or '') ~= ''
 end
 
-local function webIsAdminDiscord(discordId)
+function webIsAdminDiscord(discordId)
     discordId = trim(discordId or '')
     for _, entry in ipairs(((Config.Web or {}).adminDiscordIds) or {}) do
         if trim(entry) == discordId then
@@ -7381,7 +7381,7 @@ local function webIsAdminDiscord(discordId)
     return false
 end
 
-local function webIsSupervisorDiscord(discordId)
+function webIsSupervisorDiscord(discordId)
     discordId = trim(discordId or '')
     if discordId == '' then return false end
     if webIsAdminDiscord(discordId) then return true end
@@ -7393,7 +7393,7 @@ local function webIsSupervisorDiscord(discordId)
     return false
 end
 
-local function webBuildViewer(session, cb)
+function webBuildViewer(session, cb)
     session = session or {}
     local isAdminDiscord = webIsAdminDiscord(session.discord_id)
     local isSupervisorDiscord = webIsSupervisorDiscord(session.discord_id)
@@ -7487,7 +7487,7 @@ local function webBuildViewer(session, cb)
     end)
 end
 
-local function webRowsMyCivilians(session, cb)
+function webRowsMyCivilians(session, cb)
     session = session or {}
     local ident = {
         license = trim(session.linked_license or ''),
@@ -7501,7 +7501,7 @@ local function webRowsMyCivilians(session, cb)
     fetchCiviliansForIdentity(ident, cb)
 end
 
-local function webConsumeLinkCode(discordUser, code, cb)
+function webConsumeLinkCode(discordUser, code, cb)
     code = trim(code or ''):upper()
     if code == '' then
         cb(false, 'Enter the code from the in-game Link button first.')
@@ -7565,7 +7565,7 @@ local function webConsumeLinkCode(discordUser, code, cb)
     end)
 end
 
-local function webCanReadWithSession(request, query, cb)
+function webCanReadWithSession(request, query, cb)
     if not (Config.Web and Config.Web.enabled) then
         cb(false, 'Web mode disabled in config.', nil)
         return
@@ -7586,7 +7586,7 @@ local function webCanReadWithSession(request, query, cb)
     end)
 end
 
-local function webServeStatic(response, path)
+function webServeStatic(response, path)
     local rel = path
     if rel == '/' or rel == '' then rel = '/index.html' end
     if rel:find('%.%.', 1, true) then
@@ -7621,7 +7621,7 @@ local function webServeStatic(response, path)
     webResponse(response, 404, 'Not found', 'text/plain; charset=utf-8')
 end
 
-local function webRowsUnits()
+function webRowsUnits()
     local arr = {}
     for _, u in pairs(Units) do
         arr[#arr + 1] = u
@@ -7632,7 +7632,7 @@ local function webRowsUnits()
     return arr
 end
 
-local function webRowsCalls(cb)
+function webRowsCalls(cb)
     DB.fetchAll([[
         SELECT call_id AS id, caller, message, location, postal, status, created_at, updated_at, coords_json
         FROM mdt_calls
@@ -7648,7 +7648,7 @@ local function webRowsCalls(cb)
     end)
 end
 
-local function webRowsBolos(cb)
+function webRowsBolos(cb)
     DB.fetchAll([[
         SELECT id, type, data, created_at
         FROM mdt_bolos
@@ -7664,7 +7664,7 @@ local function webRowsBolos(cb)
     end)
 end
 
-local function webRowsReports(cb)
+function webRowsReports(cb)
     DB.fetchAll([[
         SELECT id, type, data, created_at
         FROM mdt_reports
@@ -7680,7 +7680,7 @@ local function webRowsReports(cb)
     end)
 end
 
-local function webRowsWarrants(cb)
+function webRowsWarrants(cb)
     DB.fetchAll([[
         SELECT id, target_name, target_charid, reason, status, created_by, created_discord, created_at
         FROM mdt_warrants
@@ -7691,7 +7691,7 @@ local function webRowsWarrants(cb)
     end)
 end
 
-local function webRowsActionLog(cb)
+function webRowsActionLog(cb)
     DB.fetchAll([[
         SELECT id, officer_name, officer_discord, action, target, meta AS meta_json, created_at
         FROM mdt_action_log
@@ -7707,7 +7707,7 @@ local function webRowsActionLog(cb)
     end)
 end
 
-local function webRowsNameSearch(query, cb)
+function webRowsNameSearch(query, cb)
     local first = trim((query.first or ''))
     local last = trim((query.last or ''))
     local term = trim((query.term or (first .. ' ' .. last)))
@@ -7745,7 +7745,7 @@ local function webRowsNameSearch(query, cb)
     end)
 end
 
-local function webRowsPlateSearch(query, cb)
+function webRowsPlateSearch(query, cb)
     local plate = trim(query.plate or query.term or '')
     if plate == '' then
         cb({ term = '', vehicles = {}, records = {} })
@@ -7757,7 +7757,7 @@ local function webRowsPlateSearch(query, cb)
     end)
 end
 
-local function webRowsWeaponSearch(query, cb)
+function webRowsWeaponSearch(query, cb)
     local serial = trim(query.serial or query.term or '')
     if serial == '' then
         cb({ term = '', weapons = {}, records = {} })
@@ -7783,7 +7783,7 @@ local function webRowsWeaponSearch(query, cb)
     end)
 end
 
-local function webRowsReportSearch(query, cb)
+function webRowsReportSearch(query, cb)
     local term = trim(query.query or query.term or '')
     if term == '' then
         cb({ rows = {} })
@@ -7809,7 +7809,7 @@ local function webRowsReportSearch(query, cb)
     end)
 end
 
-local function webRowsCivilians(query, cb)
+function webRowsCivilians(query, cb)
     local term = trim(query.term or query.name or '')
     if term == '' then
         cb({ rows = {} })
@@ -7830,7 +7830,7 @@ local function webRowsCivilians(query, cb)
     end)
 end
 
-local function webRowsDMV(query, cb)
+function webRowsDMV(query, cb)
     local term = trim(query.term or query.name or query.plate or '')
     if term == '' then
         cb({ rows = {} })
@@ -7869,7 +7869,7 @@ local function webRowsDMV(query, cb)
     end)
 end
 
-local function webRowsCallHistory(query, cb)
+function webRowsCallHistory(query, cb)
     local term = trim(query.query or query.term or '')
     if term == '' then
         cb({ rows = {} })
@@ -7888,7 +7888,7 @@ local function webRowsCallHistory(query, cb)
     end)
 end
 
-local function webRowsCallRoom(query, cb)
+function webRowsCallRoom(query, cb)
     local callId = tonumber(query.id or query.callId or 0) or 0
     if callId <= 0 then
         cb({ callId = 0, messages = {}, notes = {} })
@@ -7909,7 +7909,7 @@ local function webRowsCallRoom(query, cb)
     end)
 end
 
-local function webRowsLiveChat(cb)
+function webRowsLiveChat(cb)
     cb(ChatHistory or {})
 end
 
