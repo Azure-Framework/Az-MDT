@@ -1112,28 +1112,28 @@ const MDT_AUDIO = {
 
 function initAudio() {
     try {
-        MDT_AUDIO.click = new Audio('sounds/click.ogg');
+        MDT_AUDIO.click = new Audio('sounds/dispatch-generic.wav');
         MDT_AUDIO.click.volume = 0.4;
     } catch (e) {
         console.warn('[az_mdt] click sound init failed', e);
     }
 
     try {
-        MDT_AUDIO.panic = new Audio('sounds/panic.ogg');
+        MDT_AUDIO.panic = new Audio('sounds/dispatch-police.wav');
         MDT_AUDIO.panic.volume = 0.7;
     } catch (e) {
         console.warn('[az_mdt] panic sound init failed', e);
     }
 
     try {
-        MDT_AUDIO.call = new Audio('sounds/911.ogg');
+        MDT_AUDIO.call = new Audio('sounds/dispatch-ems.wav');
         MDT_AUDIO.call.volume = 0.7;
     } catch (e) {
         console.warn('[az_mdt] call sound init failed', e);
     }
 
     try {
-        MDT_AUDIO.bolo = new Audio('sounds/bolo.ogg');
+        MDT_AUDIO.bolo = new Audio('sounds/dispatch-fire.wav');
         MDT_AUDIO.bolo.volume = 0.6;
     } catch (e) {
         console.warn('[az_mdt] bolo sound init failed', e);
